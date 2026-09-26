@@ -4,7 +4,8 @@
 
 import { ObserveLog } from '@/lib/api';
 import { deviceName } from './deviceNames';
-import { prettyPayload } from './logRecords';
+import { JsonView } from './JsonView';
+import { parseJsonDocument } from './logRecords';
 
 const Detail = ({ label, value }: { label: string; value: string }) => (
   <div className="min-w-0">
@@ -14,10 +15,13 @@ const Detail = ({ label, value }: { label: string; value: string }) => (
 );
 
 export const LogDetails = ({ log }: { log: ObserveLog }) => {
-  const body = prettyPayload(log.body);
-  const attributes = prettyPayload(log.attributes);
+  const body = log.body.trim();
+  const bodyDocument = body ? parseJsonDocument(body) : null;
+  const attributes = log.attributes.trim() ? parseJsonDocument(log.attributes) : null;
+  const hasAttributes =
+    attributes !== null && (Array.isArray(attributes) || Object.keys(attributes).length > 0);
   return (
-    <div className="border-t bg-muted/30 px-9 py-4">
+    <div className="border-t bg-muted/30 px-6 py-4">
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Detail label="Device" value={log.easClientId} />
         <Detail label="Session" value={log.sessionId} />
@@ -39,17 +43,19 @@ export const LogDetails = ({ log }: { log: ObserveLog }) => {
       {body && (
         <div className="mt-4">
           <div className="mb-1.5 text-[10px] text-muted-foreground">Message</div>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-card p-3 font-mono text-[11px] leading-relaxed text-foreground">
-            {body}
-          </pre>
+          {bodyDocument !== null ? (
+            <JsonView value={bodyDocument} />
+          ) : (
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border bg-card p-3 font-mono text-[11px] leading-relaxed text-foreground">
+              {body}
+            </pre>
+          )}
         </div>
       )}
-      {attributes && attributes !== '{}' && (
+      {hasAttributes && (
         <div className="mt-4">
           <div className="mb-1.5 text-[10px] text-muted-foreground">Attributes</div>
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border bg-card p-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
-            {attributes}
-          </pre>
+          <JsonView value={attributes} />
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@
 // (see ee/LICENSE); it is NOT covered by the MIT license of this repository.
 
 import { ObserveLog } from '@/lib/api';
+import type { Json } from './JsonView';
 
 // What a log record looks like once it is read rather than stored, shared by
 // the event table and the details panel it expands into.
@@ -14,6 +15,21 @@ export const exactTime = new Intl.DateTimeFormat(undefined, {
   minute: '2-digit',
   second: '2-digit',
 });
+
+// A log row's date, down to the millisecond, as Datadog shows it.
+export const logTime = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  fractionalSecondDigits: 3,
+  hour12: false,
+});
+
+// The first block of a UUID, enough to tell rows apart; '-' for the zero UUID.
+export const shortUUID = (value: string) =>
+  !value || /^[0-]+$/.test(value) ? '-' : value.slice(0, 8);
 
 export const shortID = (value: string) =>
   value.length > 12 ? `${value.slice(0, 8)}…` : value || '-';
@@ -68,5 +84,14 @@ export const prettyPayload = (value: string) => {
     return JSON.stringify(JSON.parse(value), null, 2);
   } catch {
     return value;
+  }
+};
+// Parses a stored payload; null when it is not a JSON object or array.
+export const parseJsonDocument = (value: string): Json | null => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? (parsed as Json) : null;
+  } catch {
+    return null;
   }
 };
