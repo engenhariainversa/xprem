@@ -97,7 +97,7 @@ const testHash = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 
 func newTestService(store *fakeStore) (*Service, *fakeIndexes) {
 	indexes := &fakeIndexes{}
-	service := &Service{store: store, indexes: indexes, licenseValid: func() bool { return true }}
+	service := &Service{store: store, indexes: indexes}
 	return service, indexes
 }
 
@@ -199,16 +199,16 @@ func TestIndexJobRetriesTransientErrors(t *testing.T) {
 	require.Error(t, err)
 	var cancel *river.JobCancelError
 	assert.False(t, errors.As(err, &cancel))
-	assert.Equal(t, types.SourcemapIndexRunning, indexes.record.Status)
+	assert.Equal(t, types.SourcemapIndexPending, indexes.record.Status, "waits for River's next attempt")
 
 	require.Error(t, runJob(t, service, indexes, 5))
 	assert.Equal(t, types.SourcemapIndexFailed, indexes.record.Status)
 	assert.Contains(t, indexes.record.Reason, "connection reset")
 }
 
-func TestScheduleIndexIsANoOpWithoutALicense(t *testing.T) {
+// Without the job client, indexing is off: scheduling records nothing.
+func TestScheduleIndexIsANoOpWhenUnavailable(t *testing.T) {
 	service, indexes := newTestService(newFakeStore())
-	service.licenseValid = func() bool { return false }
 	require.NoError(t, service.ScheduleIndex(context.Background(), types.Update{AppId: "app-1", Branch: "main", UpdateId: "100"}, testHash))
 	assert.Nil(t, indexes.record)
 }

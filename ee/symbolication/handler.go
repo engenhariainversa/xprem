@@ -49,7 +49,7 @@ func renderError(w http.ResponseWriter, err error, fallbackDetail string) {
 	var valErr *validation.Error
 	switch {
 	case errors.Is(err, ErrUnavailable):
-		handlers.RenderError(w, http.StatusBadRequest, "Source map indexing needs UPLOAD_SOURCEMAPS, the database control plane and an enterprise license.")
+		handlers.RenderError(w, http.StatusBadRequest, "Source map indexing needs UPLOAD_SOURCEMAPS and the database control plane.")
 	case errors.Is(err, ErrNoSourcemap):
 		handlers.RenderError(w, http.StatusNotFound, "This update was published without a source map.")
 	case errors.Is(err, ErrUpdateNotFound):

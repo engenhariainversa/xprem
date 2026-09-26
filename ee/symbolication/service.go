@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"xprem/ee/licensing"
 	"xprem/internal/jobs"
 	"xprem/internal/types"
 	"xprem/internal/validation"
@@ -29,7 +28,7 @@ type IndexStore interface {
 }
 
 var (
-	ErrUnavailable    = errors.New("source map indexing needs source map uploads, the control plane and an enterprise license")
+	ErrUnavailable    = errors.New("source map indexing needs source map uploads and the control plane")
 	ErrNoSourcemap    = errors.New("this update has no source map")
 	ErrUpdateNotFound = errors.New("update not found")
 )
@@ -38,14 +37,13 @@ var (
 const maxMapSize = 128 << 20
 
 type Service struct {
-	store        IndexStore
-	indexes      IndexRepository
-	jobs         *jobs.Client
-	licenseValid func() bool
+	store   IndexStore
+	indexes IndexRepository
+	jobs    *jobs.Client
 }
 
 func NewService(store IndexStore, indexes IndexRepository, jobsClient *jobs.Client) *Service {
-	return &Service{store: store, indexes: indexes, jobs: jobsClient, licenseValid: licensing.IsEnterprise}
+	return &Service{store: store, indexes: indexes, jobs: jobsClient}
 }
 
 // available is nil-safe: the handler is wired even when indexing is not.
@@ -193,7 +191,8 @@ func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) er
 		return nil
 	}
 	var cancel *river.JobCancelError
-	status := types.SourcemapIndexRunning
+	// A failure River will retry waits for its next attempt.
+	status := types.SourcemapIndexPending
 	reason := err.Error()
 	switch {
 	case errors.As(err, &cancel):
