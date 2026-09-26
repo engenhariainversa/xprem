@@ -221,6 +221,7 @@ const SeriesLegend = ({
 export const UpdateHealthHistory = ({
   series,
   from,
+  to,
   live = false,
   annotations = [],
   annotationNoun,
@@ -231,6 +232,7 @@ export const UpdateHealthHistory = ({
 }: {
   series: HealthHistorySeries[];
   from?: string;
+  to?: string;
   live?: boolean;
   annotations?: TimeSeriesAnnotation[];
   annotationNoun?: string;
@@ -251,8 +253,8 @@ export const UpdateHealthHistory = ({
   );
   const windowFrom = boundedFrom(from);
   const query = useQuery({
-    queryKey: ['update-health-history', selectedAppId, updateUUIDs.join(','), windowFrom],
-    queryFn: () => api.getUpdateHealthHistory(updateUUIDs, windowFrom),
+    queryKey: ['update-health-history', selectedAppId, updateUUIDs.join(','), windowFrom, to],
+    queryFn: () => api.getUpdateHealthHistory(updateUUIDs, windowFrom, to),
     enabled: !!selectedAppId && updateUUIDs.length > 0,
     refetchInterval: live ? 5_000 : false,
   });

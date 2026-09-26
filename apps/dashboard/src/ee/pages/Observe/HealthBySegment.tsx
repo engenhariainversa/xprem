@@ -79,8 +79,10 @@ export const HealthBySegment = ({
       updateUUIDs,
       dimension,
       filters.query.from,
+      filters.query.to,
     ],
-    queryFn: () => api.getUpdateHealthSegments(updateUUIDs, dimension, filters.query.from),
+    queryFn: () =>
+      api.getUpdateHealthSegments(updateUUIDs, dimension, filters.query.from, filters.query.to),
     enabled: updateUUIDs.length > 0,
     refetchInterval: liveInterval(filters.live, filters.periodSpec),
     // Only while the question stays the same. Held across a change of

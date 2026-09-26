@@ -6,40 +6,32 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { ObserveQuery } from '@/lib/api';
 import type { FilterScope } from './navigation';
+import { isRelative, resolveRange, type TimeRange } from '@/lib/timeRange';
 
-export type ObservePeriod = '1h' | '24h' | '7d' | '14d' | '30d';
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
-// snapMs rounds the window start down to a stable boundary. Without it every
-// render computes a new `from` and react-query treats it as a brand new query,
-// so nothing is ever served from cache. `to` stays unset so the head of the
-// window keeps sliding to now on each refetch.
-export const periods: Array<{
-  value: ObservePeriod;
-  label: string;
-  windowMs: number;
-  snapMs: number;
-  liveMs: number;
-}> = [
-  { value: '1h', label: 'Last hour', windowMs: 3_600_000, snapMs: 60_000, liveMs: 5_000 },
-  { value: '24h', label: 'Last 24 hours', windowMs: 86_400_000, snapMs: 300_000, liveMs: 15_000 },
-  { value: '7d', label: 'Last 7 days', windowMs: 604_800_000, snapMs: 3_600_000, liveMs: 60_000 },
-  {
-    value: '14d',
-    label: 'Last 14 days',
-    windowMs: 1_209_600_000,
-    snapMs: 3_600_000,
-    liveMs: 60_000,
-  },
-  {
-    value: '30d',
-    label: 'Last 30 days',
-    windowMs: 2_592_000_000,
-    snapMs: 3_600_000,
-    liveMs: 60_000,
-  },
-];
+export const defaultRange: TimeRange = { from: 'now-24h', to: 'now' };
 
-export const defaultPeriod: ObservePeriod = '24h';
+// Links made before the time range picker spelled the window ?period=7d.
+const legacyPeriods: Record<string, string> = {
+  '1h': 'now-1h',
+  '24h': 'now-24h',
+  '7d': 'now-7d',
+  '14d': 'now-14d',
+  '30d': 'now-30d',
+};
+
+// snapMs rounds a relative window start down to a stable boundary. Without it
+// every render computes a new `from` and react-query treats it as a brand new
+// query, so nothing is ever served from cache. liveMs is the refresh cadence.
+export type WindowSpec = { windowMs: number; snapMs: number; liveMs: number };
+
+const windowSpec = (windowMs: number): WindowSpec => {
+  if (windowMs <= HOUR) return { windowMs, snapMs: 60_000, liveMs: 5_000 };
+  if (windowMs <= DAY) return { windowMs, snapMs: 300_000, liveMs: 15_000 };
+  return { windowMs, snapMs: HOUR, liveMs: 60_000 };
+};
 
 export type FilterKey =
   | 'platform'
@@ -309,25 +301,29 @@ const queryForScopes = (state: FilterState, scopes: FilterScope[]): ObserveQuery
   return applied;
 };
 
-const isPeriod = (value: string | null): value is ObservePeriod =>
-  periods.some(period => period.value === value);
-
 export const useObserveFilters = (scopes: FilterScope[]) => {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const period: ObservePeriod = isPeriod(searchParams.get('period'))
-    ? (searchParams.get('period') as ObservePeriod)
-    : defaultPeriod;
-  // isPeriod already guarantees the find succeeds; the fallback only exists to
-  // satisfy the type, and it resolves through defaultPeriod rather than through
-  // an index whose correctness would depend on the order of the table.
-  const periodSpec =
-    periods.find(entry => entry.value === period) ??
-    periods.find(entry => entry.value === defaultPeriod)!;
-  // Live is on by default on the short windows people watch during a rollout,
-  // and off on the long ones where polling only costs ClickHouse time.
+  const fromParam = searchParams.get('from');
+  const toParam = searchParams.get('to');
+  const periodParam = searchParams.get('period');
+  const range = useMemo<TimeRange>(() => {
+    if (fromParam && toParam && resolveRange({ from: fromParam, to: toParam }, Date.now())) {
+      return { from: fromParam, to: toParam };
+    }
+    const legacy = legacyPeriods[periodParam ?? ''];
+    return legacy ? { from: legacy, to: 'now' } : defaultRange;
+  }, [fromParam, toParam, periodParam]);
+  const periodSpec = useMemo(() => {
+    const resolved = resolveRange(range, Date.now())!;
+    return windowSpec(resolved.to.getTime() - resolved.from.getTime());
+  }, [range]);
+  // Live only makes sense for a window that ends now. It is on by default on
+  // the short windows people watch during a rollout, and off on the long ones
+  // where polling only costs ClickHouse time.
   const liveParam = searchParams.get('live');
-  const live = liveParam == null ? periodSpec.windowMs <= 86_400_000 : liveParam === '1';
+  const live =
+    range.to === 'now' && (liveParam == null ? periodSpec.windowMs <= DAY : liveParam === '1');
 
   // The window start is computed once and reused, so on its own it would stay
   // pinned to the moment the page opened and "last hour" would quietly grow
@@ -419,11 +415,17 @@ export const useObserveFilters = (scopes: FilterScope[]) => {
     });
   }, [write]);
 
-  const setPeriod = useCallback(
-    (value: ObservePeriod) => {
+  const setRange = useCallback(
+    (next: TimeRange) => {
       write(params => {
-        if (value === defaultPeriod) params.delete('period');
-        else params.set('period', value);
+        params.delete('period');
+        if (next.from === defaultRange.from && next.to === defaultRange.to) {
+          params.delete('from');
+          params.delete('to');
+        } else {
+          params.set('from', next.from);
+          params.set('to', next.to);
+        }
         // The live default follows the window length, so an explicit choice
         // made for another window must not stick to the new one.
         params.delete('live');
@@ -463,11 +465,19 @@ export const useObserveFilters = (scopes: FilterScope[]) => {
   );
 
   const query = useMemo<ObserveQuery>(() => {
-    const from = new Date(
-      Math.floor((windowTick - periodSpec.windowMs) / periodSpec.snapMs) * periodSpec.snapMs
-    ).toISOString();
-    return { from, ...queryForScopes(state, scopes) };
-  }, [periodSpec.snapMs, periodSpec.windowMs, scopes, state, windowTick]);
+    const resolved = resolveRange(range, windowTick) ?? resolveRange(defaultRange, windowTick)!;
+    // A relative end moves with windowTick, so it snaps; an absolute one is already stable.
+    const bound = (expression: string, date: Date) =>
+      new Date(
+        isRelative(expression)
+          ? Math.floor(date.getTime() / periodSpec.snapMs) * periodSpec.snapMs
+          : date.getTime()
+      ).toISOString();
+    const from = bound(range.from, resolved.from);
+    // A window ending now leaves `to` unset, so its head keeps sliding on each refetch.
+    const to = range.to === 'now' ? undefined : bound(range.to, resolved.to);
+    return { from, ...(to ? { to } : {}), ...queryForScopes(state, scopes) };
+  }, [periodSpec.snapMs, range, scopes, state, windowTick]);
 
   // What the Postgres device registry can honor of the current selection, for
   // a panel served by it on a page that reads from somewhere else. Carries no
@@ -532,9 +542,9 @@ export const useObserveFilters = (scopes: FilterScope[]) => {
     query,
     registryQuery,
     registryHonorsAll,
-    period,
+    range,
+    setRange,
     periodSpec,
-    setPeriod,
     live,
     setLive,
     applies,
@@ -551,7 +561,7 @@ export type ObserveFilters = ReturnType<typeof useObserveFilters>;
 // own cadence: a tail that lags 15s behind reads as broken.
 export const liveInterval = (
   live: boolean,
-  periodSpec: (typeof periods)[number],
+  periodSpec: WindowSpec,
   fast = false
 ): number | false => {
   if (!live) return false;
