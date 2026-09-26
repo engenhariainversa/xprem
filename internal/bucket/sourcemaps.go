@@ -6,6 +6,7 @@ import (
 	"log"
 	"xprem/config"
 	"xprem/internal/objectstore"
+	"xprem/internal/types"
 )
 
 var sourcemapsLocationEnv = map[objectstore.Mode]string{
@@ -61,12 +62,55 @@ func (s *SourcemapStore) key(appId, hash string) (string, error) {
 	return SourcemapObjectKey(appId, hash), nil
 }
 
+// indexKey is the map's index, {appId}/sourcemaps/{hash}.idx.
+func (s *SourcemapStore) indexKey(appId, hash string) (string, error) {
+	key, err := s.key(appId, hash)
+	if err != nil {
+		return "", err
+	}
+	return key + ".idx", nil
+}
+
 func (s *SourcemapStore) Exists(ctx context.Context, appId, hash string) (bool, error) {
 	key, err := s.key(appId, hash)
 	if err != nil {
 		return false, err
 	}
 	return s.objectStore.Exists(ctx, key)
+}
+
+// Get returns nil, nil when the store holds no map with that hash.
+func (s *SourcemapStore) Get(ctx context.Context, appId, hash string) (*types.BucketFile, error) {
+	key, err := s.key(appId, hash)
+	if err != nil {
+		return nil, err
+	}
+	return s.objectStore.Get(ctx, key)
+}
+
+func (s *SourcemapStore) IndexExists(ctx context.Context, appId, hash string) (bool, error) {
+	key, err := s.indexKey(appId, hash)
+	if err != nil {
+		return false, err
+	}
+	return s.objectStore.Exists(ctx, key)
+}
+
+// GetIndex returns nil, nil when the map has no index yet.
+func (s *SourcemapStore) GetIndex(ctx context.Context, appId, hash string) (*types.BucketFile, error) {
+	key, err := s.indexKey(appId, hash)
+	if err != nil {
+		return nil, err
+	}
+	return s.objectStore.Get(ctx, key)
+}
+
+func (s *SourcemapStore) PutIndex(ctx context.Context, appId, hash string, body io.Reader) error {
+	key, err := s.indexKey(appId, hash)
+	if err != nil {
+		return err
+	}
+	return s.objectStore.Put(ctx, key, body)
 }
 
 // Put stores a source map, refusing bytes that do not hash to hash.

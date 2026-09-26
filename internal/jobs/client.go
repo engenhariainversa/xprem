@@ -26,6 +26,10 @@ var ErrAlreadyRunning = errors.New("a job of this kind is already running for th
 // patch in memory, so the queue stays narrow.
 const QueueBSDiff = "bsdiff"
 
+// QueueSourcemapIndex runs the source map index jobs. Each one decodes a
+// whole map in memory, so one at a time.
+const QueueSourcemapIndex = "sourcemap-index"
+
 type Client struct {
 	pool        *pgxpool.Pool
 	workers     *river.Workers
@@ -62,8 +66,9 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 	riverClient, err := river.NewClient(driver, &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 10},
-			QueueBSDiff:        {MaxWorkers: 2},
+			river.QueueDefault:  {MaxWorkers: 10},
+			QueueBSDiff:         {MaxWorkers: 2},
+			QueueSourcemapIndex: {MaxWorkers: 1},
 		},
 		Workers: c.workers,
 	})

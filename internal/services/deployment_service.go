@@ -169,6 +169,8 @@ type DeploymentService struct {
 	updateStore   UpdateStore
 	// sourcemapStore is nil unless UPLOAD_SOURCEMAPS is on.
 	sourcemapStore SourcemapStore
+	// sourcemapIndexer is nil unless the enterprise index job is wired.
+	sourcemapIndexer SourcemapIndexer
 	// onAuditEvent is nil in community edition, where publishes, rollbacks and
 	// republishes leave no events.
 	onAuditEvent auditlog.RecordFunc
@@ -177,6 +179,16 @@ type DeploymentService struct {
 // SetSourcemapStore turns on source map uploads.
 func (s *DeploymentService) SetSourcemapStore(store SourcemapStore) {
 	s.sourcemapStore = store
+}
+
+// SourcemapIndexer schedules the index of an update's source map.
+type SourcemapIndexer interface {
+	ScheduleIndex(ctx context.Context, update types.Update, hash string) error
+}
+
+// SetSourcemapIndexer plugs the index job seam.
+func (s *DeploymentService) SetSourcemapIndexer(indexer SourcemapIndexer) {
+	s.sourcemapIndexer = indexer
 }
 
 // SetOnAuditEvent plugs the audit emission seam. Nil-safe.
@@ -352,6 +364,22 @@ func (s *DeploymentService) MarkUpdateAsChecked(ctx context.Context, update type
 				log.Printf("[bsdiff] scheduling patches for update %s: %v", update.UpdateId, err)
 			}
 		}(update, storedMetadata.Platform)
+	}
+	if updateType == types.NormalUpdate && s.sourcemapIndexer != nil {
+		go func(update types.Update) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			hash, err := s.updateRepo.GetUpdateSourcemapHash(ctx, update)
+			if err != nil || hash == nil {
+				if err != nil {
+					log.Printf("[sourcemap] reading the sourcemap of update %s: %v", update.UpdateId, err)
+				}
+				return
+			}
+			if err := s.sourcemapIndexer.ScheduleIndex(ctx, update, *hash); err != nil {
+				log.Printf("[sourcemap] scheduling the index of update %s: %v", update.UpdateId, err)
+			}
+		}(update)
 	}
 	return updateUUID, nil
 }

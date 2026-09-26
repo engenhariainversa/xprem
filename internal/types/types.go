@@ -418,6 +418,36 @@ type ChannelResolution struct {
 	Rollout *ChannelRolloutInfo `json:"rollout,omitempty"`
 }
 
+// SourcemapIndexStatus is where the index of a source map stands.
+type SourcemapIndexStatus string
+
+const (
+	SourcemapIndexPending   SourcemapIndexStatus = "pending"
+	SourcemapIndexRunning   SourcemapIndexStatus = "running"
+	SourcemapIndexStored    SourcemapIndexStatus = "stored"
+	SourcemapIndexFailed    SourcemapIndexStatus = "failed"
+	SourcemapIndexCancelled SourcemapIndexStatus = "cancelled"
+)
+
+// Reason codes of a failed or cancelled index, prefixing the underlying error.
+const (
+	SourcemapIndexReasonMapMissing  = "map_missing"
+	SourcemapIndexReasonMapInvalid  = "map_invalid"
+	SourcemapIndexReasonMapTooLarge = "map_too_large"
+)
+
+// SourcemapIndex is the index record of one source map, as the dashboard
+// shows it on the updates that carry the map.
+type SourcemapIndex struct {
+	Hash      string               `json:"hash"`
+	Status    SourcemapIndexStatus `json:"status"`
+	Reason    string               `json:"reason,omitempty"`
+	Segments  *int                 `json:"segments,omitempty"`
+	IndexSize *int64               `json:"indexSize,omitempty"`
+	Attempts  int                  `json:"attempts"`
+	UpdatedAt string               `json:"updatedAt"`
+}
+
 // BundlePatchStatus is where a (target, source) bundle patch stands.
 type BundlePatchStatus string
 

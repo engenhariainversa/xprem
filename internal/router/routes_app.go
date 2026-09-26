@@ -87,6 +87,10 @@ func registerAppRoutes(
 		AnyViewer())
 	app.route(http.MethodPost, "/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/updates/{UPDATE_ID}/patches/recompute", container.BundlePatchHandler.RecomputeUpdatePatchesHandler,
 		NeedsPermission(rbac.PermUpdatePublish, rbac.FallbackAdminOnly))
+	app.route(http.MethodGet, "/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/updates/{UPDATE_ID}/sourcemap", container.SourcemapHandler.GetUpdateSourcemapHandler,
+		AnyViewer())
+	app.route(http.MethodPost, "/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/updates/{UPDATE_ID}/sourcemap/reindex", container.SourcemapHandler.ReindexUpdateSourcemapHandler,
+		NeedsPermission(rbac.PermUpdatePublish, rbac.FallbackAdminOnly))
 	app.route(http.MethodPost, "/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/rollback", container.UpdateHandler.CreateRollbackHandler,
 		NeedsPermission(rbac.PermUpdatePublish, rbac.FallbackAdminOnly))
 	app.route(http.MethodPost, "/branch/{BRANCH}/runtimeVersion/{RUNTIME_VERSION}/republish", container.UpdateHandler.RepublishUpdateHandler,

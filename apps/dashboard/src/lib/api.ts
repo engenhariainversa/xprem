@@ -658,6 +658,29 @@ export type UpdateDetailsRecord = {
   expoConfig: string;
   rolloutPercentage?: number | null;
   controlUpdateId?: string | null;
+  // Hash of the bundle's source map in the sourcemap store; absent when the
+  // update was published without one (control-plane only).
+  sourcemapHash?: string | null;
+};
+
+export type SourcemapIndexStatus = 'pending' | 'running' | 'stored' | 'failed' | 'cancelled';
+
+// The index job of an update's source map (enterprise, control-plane only).
+export type SourcemapIndexRecord = {
+  hash: string;
+  status: SourcemapIndexStatus;
+  reason?: string;
+  segments?: number;
+  indexSize?: number;
+  attempts: number;
+  updatedAt: string;
+};
+
+// An update's source map: its hash and, once a job handled it, the index
+// record. index is null for a map no job ever recorded.
+export type UpdateSourcemapRecord = {
+  hash: string;
+  index: SourcemapIndexRecord | null;
 };
 
 export type BundlePatchStatus =
@@ -840,6 +863,7 @@ export type ServerSettings = {
   SERVER_VERSION: string;
   CONTROL_PLANE_ENABLED: boolean;
   BUNDLE_DIFFING: boolean;
+  UPLOAD_SOURCEMAPS: boolean;
   CACHE_MODE: string;
   REDIS_HOST: string;
   REDIS_PORT: string;
@@ -1757,6 +1781,20 @@ export class ApiClient {
   public async recomputeUpdatePatches(branch: string, runtimeVersion: string, updateId: string) {
     return this.request<{ scheduled: number }>(
       `${this.appScope()}/branch/${encodeURIComponent(branch)}/runtimeVersion/${encodeURIComponent(runtimeVersion)}/updates/${encodeURIComponent(updateId)}/patches/recompute`,
+      { method: 'POST' }
+    );
+  }
+
+  public async getUpdateSourcemap(branch: string, runtimeVersion: string, updateId: string) {
+    return this.request<UpdateSourcemapRecord>(
+      `${this.appScope()}/branch/${encodeURIComponent(branch)}/runtimeVersion/${encodeURIComponent(runtimeVersion)}/updates/${encodeURIComponent(updateId)}/sourcemap`,
+      { method: 'GET' }
+    );
+  }
+  // Schedules the index of this update's source map again, as its publish did.
+  public async reindexUpdateSourcemap(branch: string, runtimeVersion: string, updateId: string) {
+    return this.request<{ scheduled: boolean }>(
+      `${this.appScope()}/branch/${encodeURIComponent(branch)}/runtimeVersion/${encodeURIComponent(runtimeVersion)}/updates/${encodeURIComponent(updateId)}/sourcemap/reindex`,
       { method: 'POST' }
     );
   }

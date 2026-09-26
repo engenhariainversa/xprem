@@ -807,6 +807,46 @@ func (q *Queries) FinishBundlePatch(ctx context.Context, arg FinishBundlePatchPa
 	return result.RowsAffected(), nil
 }
 
+const finishSourcemapIndex = `-- name: FinishSourcemapIndex :execrows
+UPDATE sourcemap_indexes si
+SET status = $1,
+    reason = $2,
+    segments = $3,
+    index_size = $4,
+    updated_at = CURRENT_TIMESTAMP
+FROM branches b
+WHERE b.id = si.branch_id
+  AND b.app_id = $5
+  AND b.name = $6
+  AND si.update_id = $7
+`
+
+type FinishSourcemapIndexParams struct {
+	Status     types.SourcemapIndexStatus `json:"status"`
+	Reason     *string                    `json:"reason"`
+	Segments   *int32                     `json:"segments"`
+	IndexSize  *int64                     `json:"index_size"`
+	AppID      pgtype.UUID                `json:"app_id"`
+	BranchName string                     `json:"branch_name"`
+	UpdateID   int64                      `json:"update_id"`
+}
+
+func (q *Queries) FinishSourcemapIndex(ctx context.Context, arg FinishSourcemapIndexParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishSourcemapIndex,
+		arg.Status,
+		arg.Reason,
+		arg.Segments,
+		arg.IndexSize,
+		arg.AppID,
+		arg.BranchName,
+		arg.UpdateID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getActiveRolloutUpdates = `-- name: GetActiveRolloutUpdates :many
 SELECT u.id, u.platform, u.rollout_percentage, u.control_update_id, u.created_at
 FROM updates u
@@ -2540,6 +2580,59 @@ func (q *Queries) GetUpdateOriginByUUID(ctx context.Context, arg GetUpdateOrigin
 	row := q.db.QueryRow(ctx, getUpdateOriginByUUID, arg.AppID, arg.UpdateUuid)
 	var i GetUpdateOriginByUUIDRow
 	err := row.Scan(&i.BranchName, &i.PublishGroup)
+	return i, err
+}
+
+const getUpdateSourcemap = `-- name: GetUpdateSourcemap :one
+SELECT u.sourcemap_hash,
+       COALESCE(si.status, '')::text AS index_status, si.reason AS index_reason, si.segments AS index_segments,
+       si.index_size, si.attempts AS index_attempts, si.updated_at AS index_updated_at
+FROM updates u
+JOIN branches b ON b.id = u.branch_id
+JOIN runtime_versions r ON r.id = u.runtime_version_id
+LEFT JOIN sourcemap_indexes si ON si.branch_id = u.branch_id AND si.update_id = u.id
+WHERE b.app_id = $1
+  AND b.name = $2
+  AND r.version = $3
+  AND u.id = $4
+`
+
+type GetUpdateSourcemapParams struct {
+	AppID          pgtype.UUID `json:"app_id"`
+	BranchName     string      `json:"branch_name"`
+	RuntimeVersion string      `json:"runtime_version"`
+	UpdateID       int64       `json:"update_id"`
+}
+
+type GetUpdateSourcemapRow struct {
+	SourcemapHash  *string            `json:"sourcemap_hash"`
+	IndexStatus    string             `json:"index_status"`
+	IndexReason    *string            `json:"index_reason"`
+	IndexSegments  *int32             `json:"index_segments"`
+	IndexSize      *int64             `json:"index_size"`
+	IndexAttempts  *int32             `json:"index_attempts"`
+	IndexUpdatedAt pgtype.Timestamptz `json:"index_updated_at"`
+}
+
+// The update's map and, when a job handled it, its index record: one row
+// per update, index columns NULL until then.
+func (q *Queries) GetUpdateSourcemap(ctx context.Context, arg GetUpdateSourcemapParams) (GetUpdateSourcemapRow, error) {
+	row := q.db.QueryRow(ctx, getUpdateSourcemap,
+		arg.AppID,
+		arg.BranchName,
+		arg.RuntimeVersion,
+		arg.UpdateID,
+	)
+	var i GetUpdateSourcemapRow
+	err := row.Scan(
+		&i.SourcemapHash,
+		&i.IndexStatus,
+		&i.IndexReason,
+		&i.IndexSegments,
+		&i.IndexSize,
+		&i.IndexAttempts,
+		&i.IndexUpdatedAt,
+	)
 	return i, err
 }
 
@@ -5726,6 +5819,30 @@ func (q *Queries) SetBundlePatchRunning(ctx context.Context, arg SetBundlePatchR
 	return result.RowsAffected(), nil
 }
 
+const setSourcemapIndexRunning = `-- name: SetSourcemapIndexRunning :execrows
+UPDATE sourcemap_indexes si
+SET status = 'running', attempts = si.attempts + 1, updated_at = CURRENT_TIMESTAMP
+FROM branches b
+WHERE b.id = si.branch_id
+  AND b.app_id = $1
+  AND b.name = $2
+  AND si.update_id = $3
+`
+
+type SetSourcemapIndexRunningParams struct {
+	AppID      pgtype.UUID `json:"app_id"`
+	BranchName string      `json:"branch_name"`
+	UpdateID   int64       `json:"update_id"`
+}
+
+func (q *Queries) SetSourcemapIndexRunning(ctx context.Context, arg SetSourcemapIndexRunningParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSourcemapIndexRunning, arg.AppID, arg.BranchName, arg.UpdateID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUpdateAssetMapping = `-- name: SetUpdateAssetMapping :execresult
 UPDATE updates
 SET asset_mapping = $2
@@ -6677,6 +6794,43 @@ func (q *Queries) UpsertSSOConfig(ctx context.Context, arg UpsertSSOConfigParams
 		&i.ManualUserValidation,
 	)
 	return i, err
+}
+
+const upsertSourcemapIndexPending = `-- name: UpsertSourcemapIndexPending :execrows
+INSERT INTO sourcemap_indexes (branch_id, update_id, hash, status)
+SELECT b.id, $1, $2, 'pending'
+FROM branches b
+WHERE b.app_id = $3 AND b.name = $4
+ON CONFLICT (branch_id, update_id) DO UPDATE
+SET hash = EXCLUDED.hash,
+    status = 'pending',
+    reason = NULL,
+    segments = NULL,
+    index_size = NULL,
+    attempts = 0,
+    updated_at = CURRENT_TIMESTAMP
+`
+
+type UpsertSourcemapIndexPendingParams struct {
+	UpdateID   int64       `json:"update_id"`
+	Hash       string      `json:"hash"`
+	AppID      pgtype.UUID `json:"app_id"`
+	BranchName string      `json:"branch_name"`
+}
+
+// App-scoped: the branch lookup refuses a branch of another app. Re-inserting
+// an existing row resets it, which is what a reindex wants.
+func (q *Queries) UpsertSourcemapIndexPending(ctx context.Context, arg UpsertSourcemapIndexPendingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertSourcemapIndexPending,
+		arg.UpdateID,
+		arg.Hash,
+		arg.AppID,
+		arg.BranchName,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const validateAndTouchAuth = `-- name: ValidateAndTouchAuth :one

@@ -15,6 +15,7 @@ import (
 	"xprem/ee/observe"
 	"xprem/ee/rbac"
 	"xprem/ee/sso"
+	"xprem/ee/symbolication"
 	"xprem/ee/telemetry"
 	"xprem/internal/bucket"
 	"xprem/internal/cache"
@@ -63,6 +64,7 @@ type AppContainer struct {
 	SSOHandler                  *sso.SSOHandler
 	UpdateHandler               *dashhandlers.UpdateHandler
 	BundlePatchHandler          *dashhandlers.BundlePatchHandler
+	SourcemapHandler            *symbolication.Handler
 	UploadHandler               *handlers.UploadHandler
 	RepublishHandler            *handlers.RepublishHandler
 	UsersHandler                *dashhandlers.UsersHandler
@@ -103,6 +105,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	var mcpHandler *mcp.MCPHandler
 	var rolloutRepo services.RolloutRepository
 	var bundlePatchRepo services.BundlePatchRepository
+	var sourcemapIndexRepo symbolication.IndexRepository
 	var licenseRepo licensing.LicenseRepository
 	var ssoRepo sso.SSORepository
 	var apiKeyAccessRepo apikeyrestrictions.ApiKeyAccessRepository
@@ -176,6 +179,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 		}
 		rolloutRepo = repository.NewPostgresRolloutRepository(dbEngine)
 		bundlePatchRepo = repository.NewPostgresBundlePatchRepository(dbEngine)
+		sourcemapIndexRepo = symbolication.NewPostgresIndexRepository(dbEngine)
 
 		// Resolved even when telemetry is off: licensing needs the instance id.
 		seedInstanceId, _ := resolvedBucket.InstanceStore.ID(ctx)
@@ -286,9 +290,29 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	updateService := services.NewUpdateService(updateRepo)
 	bsDiffService := services.NewBSDiffService(resolvedBucket.BlobStore, resolvedBucket.PatchStore, jobsClient, updateService, updateRepo, bundlePatchRepo)
 	expoImportService := expoimport.NewService(appService, branchService, channelService, updateRepo, jobsClient, resolvedBucket.BlobStore, resolvedBucket.UpdateStore)
+	var sourcemapStore *bucket.SourcemapStore
+	var symbolicationService *symbolication.Service
+	if config.IsSourcemapUploadEnabled() {
+		store, err := bucket.OpenSourcemapStore()
+		if err != nil {
+			log.Fatalf("UPLOAD_SOURCEMAPS is enabled but %v", err)
+		}
+		sourcemapStore = store
+		// CDN_BASE_URL fronts a publicly readable bucket, and a source map
+		// embeds the app's source code.
+		if sourcemapStore.SharesUpdatesLocation() && cdn.ResolvedType() == "generic" {
+			log.Fatalf("UPLOAD_SOURCEMAPS: source maps cannot share the updates bucket when CDN_BASE_URL serves it; point them at a dedicated bucket")
+		}
+		if jobsClient != nil && sourcemapIndexRepo != nil {
+			symbolicationService = symbolication.NewService(sourcemapStore, sourcemapIndexRepo, jobsClient)
+		}
+	}
 	if jobsClient != nil {
 		expoimport.RegisterWorker(jobsClient.Workers(), expoImportService)
 		services.RegisterBSDiffWorker(jobsClient.Workers(), bsDiffService)
+		if symbolicationService != nil {
+			symbolication.RegisterWorker(jobsClient.Workers(), symbolicationService)
+		}
 		if err := jobsClient.Start(ctx); err != nil {
 			log.Fatalf("Job system startup failed: %v", err)
 		}
@@ -301,17 +325,11 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	expoProtocolService := services.NewExpoProtocolService(appRepo, channelRepo, updateRepo, updateService, services.DefaultBranchRules(), resolvedBucket.BlobStore, resolvedBucket.PatchStore)
 	deploymentService := services.NewDeploymentService(branchService, updateService, updateRepo, resolvedBucket.BlobStore, resolvedBucket.UpdateStore, bsDiffService)
 	deploymentService.SetOnAuditEvent(auditService.Record)
-	if config.IsSourcemapUploadEnabled() {
-		sourcemapStore, err := bucket.OpenSourcemapStore()
-		if err != nil {
-			log.Fatalf("UPLOAD_SOURCEMAPS is enabled but %v", err)
-		}
-		// CDN_BASE_URL fronts a publicly readable bucket, and a source map
-		// embeds the app's source code.
-		if sourcemapStore.SharesUpdatesLocation() && cdn.ResolvedType() == "generic" {
-			log.Fatalf("UPLOAD_SOURCEMAPS: source maps cannot share the updates bucket when CDN_BASE_URL serves it; point them at a dedicated bucket")
-		}
+	if sourcemapStore != nil {
 		deploymentService.SetSourcemapStore(sourcemapStore)
+		if symbolicationService != nil {
+			deploymentService.SetSourcemapIndexer(symbolicationService)
+		}
 	}
 	bsDiffService.SetOnAuditEvent(auditService.Record)
 	rolloutService := services.NewRolloutService(rolloutRepo, channelRepo, updateRepo, deploymentService)
@@ -387,6 +405,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 		SSOHandler:                  sso.NewSSOHandler(ssoService, rateLimiter),
 		UpdateHandler:               dashhandlers.NewUpdateHandler(updateService, deploymentService),
 		BundlePatchHandler:          dashhandlers.NewBundlePatchHandler(bsDiffService),
+		SourcemapHandler:            symbolication.NewHandler(symbolicationService),
 		UploadHandler:               handlers.NewUploadHandler(deploymentService),
 		UsersHandler:                dashhandlers.NewUsersHandler(userService, dashboardAuthService, rateLimiter),
 		UserRepo:                    userRepo,
