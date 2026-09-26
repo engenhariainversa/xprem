@@ -294,7 +294,7 @@ func FlattenLogs(appID string, batch LogBatch, now time.Time) []LogRow {
 				SeverityNumber: record.SeverityNumber,
 				SeverityText:   truncateRunes(record.SeverityText, maxSeverityTextRunes),
 				IsFatal:        isFatal,
-				Body:           truncateRunes(record.Body, maxBodyRunes),
+				Body:           boundBody(record.Body),
 			}
 			hashParts := []string{
 				row.EASClientID, row.SessionID, row.UpdateID, row.EventName,
@@ -348,9 +348,15 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
 
 	kept := make(map[string]any, len(names))
 	budget := maxAttributesBytes
+	stacktraceBudget := maxStacktraceBytesPerRecord
 	for _, key := range names {
 		value := attrs[key]
 		if text, isText := value.(string); isText {
+			if trace, isTrace := trimStacktrace(text); isTrace && len(trace) <= stacktraceBudget {
+				stacktraceBudget -= len(trace)
+				kept[key] = trace
+				continue
+			}
 			value = truncateRunes(text, maxAttributeValueRunes)
 		}
 		cost := len(key) + 8
