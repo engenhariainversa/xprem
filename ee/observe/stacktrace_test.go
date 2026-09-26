@@ -28,16 +28,16 @@ func TestTrimStacktraceCutsTheMiddle(t *testing.T) {
 	lines := strings.Split(trace, "\n")
 	require.Len(t, lines, 1+recentFramesKept+1+oldestFramesKept)
 	assert.Equal(t, "Error: boom", lines[0])
-	assert.Contains(t, lines[recentFramesKept], "at f63 ")
-	assert.Equal(t, "    ... skipping 220 frames", lines[recentFramesKept+1])
-	assert.Contains(t, lines[recentFramesKept+2], "at f284 ")
+	assert.Contains(t, lines[recentFramesKept], "at f49 ")
+	assert.Equal(t, "    ... skipping 200 frames", lines[recentFramesKept+1])
+	assert.Contains(t, lines[recentFramesKept+2], "at f250 ")
 	assert.Contains(t, lines[len(lines)-1], "at f299 ")
 }
 
 func TestTrimStacktraceCountsFramesHermesAlreadySkipped(t *testing.T) {
-	lines := strings.Split(hermesTrace(100), "\n")
-	// Line 71 is frame f70, inside the middle that is cut.
-	lines = append(lines[:71:71], append([]string{"    ... skipping 1000 frames"}, lines[71:]...)...)
+	lines := strings.Split(hermesTrace(120), "\n")
+	// Line 61 is frame f60, inside the middle that is cut.
+	lines = append(lines[:61:61], append([]string{"    ... skipping 1000 frames"}, lines[61:]...)...)
 	trace, ok := trimStacktrace(strings.Join(lines, "\n"))
 	require.True(t, ok)
 	assert.Contains(t, trace, "    ... skipping 1020 frames")

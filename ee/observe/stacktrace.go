@@ -12,8 +12,8 @@ import (
 // A stack trace keeps its most recent and its oldest frames; the oldest show
 // what started a runaway recursion.
 const (
-	recentFramesKept = 64
-	oldestFramesKept = 16
+	recentFramesKept = 50
+	oldestFramesKept = 50
 )
 
 const (
