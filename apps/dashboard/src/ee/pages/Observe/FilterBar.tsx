@@ -467,7 +467,11 @@ export const FilterBar = ({
               </>
             )}
           </Button>
-          <TimeRangePicker value={range} onChange={next => next && setRange(next)} />
+          <TimeRangePicker
+            value={range}
+            maxRangeMs={filters.maxWindow}
+            onChange={next => next && setRange(next)}
+          />
         </div>
       </div>
 

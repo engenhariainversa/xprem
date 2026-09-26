@@ -92,11 +92,18 @@ export const shiftRange = (range: TimeRange, direction: -1 | 1, now: number): Ti
   return { from: formatAbsolute(new Date(to - length)), to: formatAbsolute(new Date(to)) };
 };
 
-// Doubles the window around its middle; a window ending now keeps ending now.
-export const zoomOutRange = (range: TimeRange, now: number): TimeRange | null => {
+// The length of a range in ms; 0 when it does not resolve.
+export const rangeLengthMs = (range: TimeRange, now: number) => {
+  const resolved = resolveRange(range, now);
+  return resolved ? resolved.to.getTime() - resolved.from.getTime() : 0;
+};
+
+// Doubles the window around its middle, never past maxMs; a window ending now
+// keeps ending now.
+export const zoomOutRange = (range: TimeRange, now: number, maxMs = Infinity): TimeRange | null => {
   const resolved = resolveRange(range, now);
   if (!resolved) return null;
-  const length = resolved.to.getTime() - resolved.from.getTime();
+  const length = Math.min(resolved.to.getTime() - resolved.from.getTime(), maxMs / 2);
   if (range.to === 'now') {
     return { from: formatAbsolute(new Date(now - 2 * length)), to: 'now' };
   }

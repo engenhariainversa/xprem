@@ -19,7 +19,7 @@ import {
   quickRanges,
   readRecentRanges,
   rememberRange,
-  resolveRange,
+  rangeLengthMs,
   shiftRange,
   TimeRange,
   zoomOutRange,
@@ -166,11 +166,14 @@ export const TimeRangePicker = ({
   value,
   onChange,
   allowAllTime = false,
+  maxRangeMs = Infinity,
   className,
 }: {
   value: TimeRange | null;
   onChange: (range: TimeRange | null) => void;
   allowAllTime?: boolean;
+  // The widest range the data behind the picker can be asked for.
+  maxRangeMs?: number;
   className?: string;
 }) => {
   const [open, setOpen] = useState(false);
@@ -192,7 +195,8 @@ export const TimeRangePicker = ({
     setOpen(false);
   };
 
-  const draftValid = resolveRange(draft, Date.now()) !== null;
+  const draftLength = rangeLengthMs(draft, Date.now());
+  const draftValid = draftLength > 0 && draftLength <= maxRangeMs;
   const apply = () => {
     if (!draftValid) return;
     rememberRange(draft);
@@ -203,10 +207,12 @@ export const TimeRangePicker = ({
     const needle = search.trim().toLowerCase();
     const all = [
       ...(allowAllTime ? [{ range: null, label: 'All time' }] : []),
-      ...quickRanges.map(({ label, ...range }) => ({ range, label })),
+      ...quickRanges
+        .filter(range => rangeLengthMs(range, Date.now()) <= maxRangeMs)
+        .map(({ label, ...range }) => ({ range, label })),
     ];
     return needle ? all.filter(option => option.label.toLowerCase().includes(needle)) : all;
-  }, [allowAllTime, search]);
+  }, [allowAllTime, maxRangeMs, search]);
 
   const label = value ? describeRange(value) : 'All time';
   const zone = browserZone();
@@ -261,7 +267,9 @@ export const TimeRangePicker = ({
               </Button>
               {!draftValid && (
                 <p className="text-xs text-destructive">
-                  Use now, now-7d, or a date like 2026-09-27 14:00, with From before To.
+                  {draftLength > maxRangeMs
+                    ? `This view reads at most ${Math.round(maxRangeMs / 86_400_000)} days at a time.`
+                    : 'Use now, now-7d, or a date like 2026-09-27 14:00, with From before To.'}
                 </p>
               )}
               {recent.length > 0 && (
@@ -335,7 +343,7 @@ export const TimeRangePicker = ({
         type="button"
         aria-label="Zoom out"
         disabled={!value}
-        onClick={() => value && step(zoomOutRange(value, Date.now()))}
+        onClick={() => value && step(zoomOutRange(value, Date.now(), maxRangeMs))}
         className="flex h-9 w-8 items-center justify-center border-l text-muted-foreground hover:bg-accent disabled:opacity-40">
         <ZoomOut className="h-4 w-4" />
       </button>

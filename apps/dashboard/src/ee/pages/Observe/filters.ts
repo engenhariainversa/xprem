@@ -13,6 +13,10 @@ const DAY = 24 * HOUR;
 
 export const defaultRange: TimeRange = { from: 'now-24h', to: 'now' };
 
+// The longest window a page may ask for, as ee/observe enforces it:
+// maxLogsWindow for the event table, maxOverviewWindow everywhere else.
+export const maxWindowMs = (page: string) => (page === 'events' ? 31 * DAY : 90 * DAY);
+
 // Links made before the time range picker spelled the window ?period=7d.
 const legacyPeriods: Record<string, string> = {
   '1h': 'now-1h',
@@ -301,7 +305,7 @@ const queryForScopes = (state: FilterState, scopes: FilterScope[]): ObserveQuery
   return applied;
 };
 
-export const useObserveFilters = (scopes: FilterScope[]) => {
+export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const fromParam = searchParams.get('from');
@@ -473,11 +477,18 @@ export const useObserveFilters = (scopes: FilterScope[]) => {
           ? Math.floor(date.getTime() / periodSpec.snapMs) * periodSpec.snapMs
           : date.getTime()
       ).toISOString();
-    const from = bound(range.from, resolved.from);
+    // Snapping moves the start earlier, and a range wider than the page allows
+    // is a 400: the start never goes past the earliest the server accepts.
+    const earliest = (range.to === 'now' ? windowTick : resolved.to.getTime()) - maxWindow;
+    const snappedFrom = bound(range.from, resolved.from);
+    const from =
+      new Date(snappedFrom).getTime() < earliest
+        ? new Date(Math.ceil(earliest / periodSpec.snapMs) * periodSpec.snapMs).toISOString()
+        : snappedFrom;
     // A window ending now leaves `to` unset, so its head keeps sliding on each refetch.
     const to = range.to === 'now' ? undefined : bound(range.to, resolved.to);
     return { from, ...(to ? { to } : {}), ...queryForScopes(state, scopes) };
-  }, [periodSpec.snapMs, range, scopes, state, windowTick]);
+  }, [maxWindow, periodSpec.snapMs, range, scopes, state, windowTick]);
 
   // What the Postgres device registry can honor of the current selection, for
   // a panel served by it on a page that reads from somewhere else. Carries no
@@ -544,6 +555,7 @@ export const useObserveFilters = (scopes: FilterScope[]) => {
     registryHonorsAll,
     range,
     setRange,
+    maxWindow,
     periodSpec,
     live,
     setLive,
