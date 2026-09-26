@@ -15,7 +15,13 @@ import { EnterpriseExplainerDialog } from '@/ee/components/EnterpriseExplainerDi
 // frosted overlay with an upsell card; its button opens the enterprise
 // explainer dialog. Shares the ['license'] query with the License page and
 // EnterpriseBadge, so activating a key unlocks the block immediately.
-export const EnterpriseFeatureGate = ({ children }: { children: ReactNode }) => {
+export const EnterpriseFeatureGate = ({
+  children,
+  feature,
+}: {
+  children: ReactNode;
+  feature?: { name: string; description: ReactNode };
+}) => {
   const [isExplainerOpen, setIsExplainerOpen] = useState(false);
 
   const licenseQuery = useQuery({
@@ -55,7 +61,11 @@ export const EnterpriseFeatureGate = ({ children }: { children: ReactNode }) => 
         </div>
       </div>
 
-      <EnterpriseExplainerDialog open={isExplainerOpen} onOpenChange={setIsExplainerOpen} />
+      <EnterpriseExplainerDialog
+        open={isExplainerOpen}
+        onOpenChange={setIsExplainerOpen}
+        feature={feature}
+      />
     </div>
   );
 };

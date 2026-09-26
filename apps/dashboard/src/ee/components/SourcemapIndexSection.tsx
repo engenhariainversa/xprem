@@ -8,6 +8,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { api, SourcemapIndexStatus, UpdateSourcemapRecord, describeApiError } from '@/lib/api';
 import { useSelectedApp } from '@/lib/SelectedAppContext';
 import { useAppPermission } from '@/ee/lib/PermissionsContext';
+import { EnterpriseFeatureGate } from '@/ee/components/EnterpriseFeatureGate';
 import { useToast } from '@/hooks/use-toast';
 import { formatTimestamp } from '@/lib/utils';
 import { ApiError } from '@/components/APIError';
@@ -104,6 +105,12 @@ const IndexOutcome = ({ record }: { record: UpdateSourcemapRecord }) => {
   );
 };
 
+const sourcemapFeature = {
+  name: 'Source map symbolication',
+  description:
+    'xprem indexes the source map of each update to enrich Observe error logs: every stack frame pointing into the bundle is traced back to your original file, line and function.',
+};
+
 export const SourcemapIndexSection = ({
   branch,
   runtimeVersion,
@@ -156,45 +163,47 @@ export const SourcemapIndexSection = ({
   );
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <h2 className="text-base font-semibold">Source map</h2>
-        {canReindex ? (
-          reindexButton
-        ) : (
-          <TooltipProvider delayDuration={150}>
-            <Tooltip>
-              {/* A disabled button emits no pointer events, so the wrapper carries the tooltip. */}
-              <TooltipTrigger asChild>
-                <span tabIndex={0} className="inline-flex">
-                  {reindexButton}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="left" className="text-xs font-normal">
-                Only an admin can reindex a source map.
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-      </div>
-
-      {error ? (
-        <ApiError error={error} />
-      ) : isLoading || !data ? (
-        <Skeleton className="h-24 w-full rounded-xl" />
-      ) : (
-        <div className="flex items-start justify-between gap-4 rounded-xl border bg-card px-4 py-3 shadow-sm">
-          <div className="min-w-0 space-y-0.5">
-            <p className="text-xs text-muted-foreground">Map</p>
-            <code className="break-all font-mono text-xs" title={sourcemapHash}>
-              {sourcemapHash}
-            </code>
-          </div>
-          <div className="w-64 shrink-0">
-            <IndexOutcome record={data} />
-          </div>
+    <EnterpriseFeatureGate feature={sourcemapFeature}>
+      <section className="space-y-3">
+        <div className="flex items-start justify-between gap-4">
+          <h2 className="text-base font-semibold">Source map</h2>
+          {canReindex ? (
+            reindexButton
+          ) : (
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                {/* A disabled button emits no pointer events, so the wrapper carries the tooltip. */}
+                <TooltipTrigger asChild>
+                  <span tabIndex={0} className="inline-flex">
+                    {reindexButton}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="text-xs font-normal">
+                  Only an admin can reindex a source map.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
-      )}
-    </section>
+
+        {error ? (
+          <ApiError error={error} />
+        ) : isLoading || !data ? (
+          <Skeleton className="h-24 w-full rounded-xl" />
+        ) : (
+          <div className="flex items-start justify-between gap-4 rounded-xl border bg-card px-4 py-3 shadow-sm">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-xs text-muted-foreground">Map</p>
+              <code className="break-all font-mono text-xs" title={sourcemapHash}>
+                {sourcemapHash}
+              </code>
+            </div>
+            <div className="w-64 shrink-0">
+              <IndexOutcome record={data} />
+            </div>
+          </div>
+        )}
+      </section>
+    </EnterpriseFeatureGate>
   );
 };

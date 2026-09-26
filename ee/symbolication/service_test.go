@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"xprem/internal/jobs"
 	"xprem/internal/types"
 
 	"github.com/riverqueue/river"
@@ -97,7 +98,7 @@ const testHash = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 
 func newTestService(store *fakeStore) (*Service, *fakeIndexes) {
 	indexes := &fakeIndexes{}
-	service := &Service{store: store, indexes: indexes}
+	service := &Service{store: store, indexes: indexes, licenseValid: func() bool { return true }}
 	return service, indexes
 }
 
@@ -204,6 +205,16 @@ func TestIndexJobRetriesTransientErrors(t *testing.T) {
 	require.Error(t, runJob(t, service, indexes, 5))
 	assert.Equal(t, types.SourcemapIndexFailed, indexes.record.Status)
 	assert.Contains(t, indexes.record.Reason, "connection reset")
+}
+
+func TestIndexingIsUnavailableWithoutALicense(t *testing.T) {
+	service, _ := newTestService(newFakeStore())
+	service.jobs = &jobs.Client{}
+	require.True(t, service.available())
+	service.licenseValid = func() bool { return false }
+	assert.False(t, service.available())
+	_, err := service.GetUpdateSourcemap(context.Background(), "app-1", "main", "1", "100")
+	assert.ErrorIs(t, err, ErrUnavailable)
 }
 
 // Without the job client, indexing is off: scheduling records nothing.
