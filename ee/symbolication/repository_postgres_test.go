@@ -81,7 +81,7 @@ func TestIndexRecordLifecyclePostgres(t *testing.T) {
 	require.NoError(t, f.updates.StoreUpdateSourcemapHash(ctx, update, testHash))
 
 	require.NoError(t, f.indexes.MarkPending(ctx, update, testHash))
-	require.NoError(t, f.indexes.MarkRunning(ctx, update))
+	require.NoError(t, f.indexes.MarkRunning(ctx, update, testHash, 1))
 	segments, size := 36, int64(1234)
 	require.NoError(t, f.indexes.Finish(ctx, update, types.SourcemapIndexStored, "", &segments, &size))
 
@@ -107,6 +107,15 @@ func TestIndexRecordLifecyclePostgres(t *testing.T) {
 	assert.Equal(t, types.SourcemapIndexPending, record.Status)
 	assert.Equal(t, 0, record.Attempts)
 	assert.Nil(t, record.Segments)
+
+	unrecorded := f.createUpdate(t, 101)
+	require.NoError(t, f.updates.StoreUpdateSourcemapHash(ctx, unrecorded, testHash))
+	require.NoError(t, f.indexes.MarkRunning(ctx, unrecorded, testHash, 1))
+	sourcemap, err = f.indexes.GetUpdateSourcemap(ctx, f.appId, "main", "1", unrecorded.UpdateId)
+	require.NoError(t, err)
+	require.NotNil(t, sourcemap.Index)
+	assert.Equal(t, types.SourcemapIndexRunning, sourcemap.Index.Status)
+	assert.Equal(t, 1, sourcemap.Index.Attempts)
 }
 
 func TestIndexRecordRefusesAForeignBranchPostgres(t *testing.T) {

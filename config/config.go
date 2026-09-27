@@ -230,11 +230,8 @@ func LoadConfig() {
 // IsSourcemapUploadEnabled reports whether publishes store the bundle's source
 // map alongside the update (UPLOAD_SOURCEMAPS=true, off by default).
 func IsSourcemapUploadEnabled() bool {
-	if !IsDBMode() {
-		return false
-	}
 	enabled, _ := strconv.ParseBool(GetEnv("UPLOAD_SOURCEMAPS"))
-	return enabled
+	return enabled && IsDBMode()
 }
 
 // IsBundleDiffingEnabled reports whether bundle patches are computed at

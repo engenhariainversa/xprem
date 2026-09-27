@@ -54,6 +54,23 @@ func TestReadStacktraceKeepsAShortTrace(t *testing.T) {
 	assert.Len(t, trace.frames, 20)
 }
 
+func TestReadStacktraceCutsTheMessageAndNotTheFrames(t *testing.T) {
+	trace, ok := readStacktrace(strings.Repeat("m", 40_000)+"\n"+hermesTrace(3), 2)
+	require.True(t, ok)
+	assert.Len(t, trace.frames, 3)
+	lines := strings.Split(trace.text, "\n")
+	require.Len(t, lines, 5)
+	assert.Len(t, lines[0], maxAttributeValueRunes)
+	assert.Contains(t, lines[4], "at f2 ")
+
+	message := strings.Repeat(strings.Repeat("m", 1000)+"\n", 40)
+	trace, ok = readStacktrace(message+hermesTrace(3), 2)
+	require.True(t, ok)
+	assert.Len(t, trace.frames, 3, "a message of many lines leaves the frames their room")
+	assert.Contains(t, trace.text, "at f2 ")
+	assert.LessOrEqual(t, len([]rune(trace.text)), maxStacktraceRunes)
+}
+
 func TestReadStacktraceIgnoresText(t *testing.T) {
 	_, ok := readStacktrace("line one\nline two\n    at only one frame (a.js:1:2)", 2)
 	assert.False(t, ok)

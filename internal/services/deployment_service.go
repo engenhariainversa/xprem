@@ -250,8 +250,9 @@ func (s *DeploymentService) ProcessUploadedUpdate(ctx context.Context, params Pr
 		return "", err
 	}
 	errorVerify := update2.VerifyUploadedUpdate(ctx, *currentUpdate, mapping)
+	var sourcemapHash *string
 	if errorVerify == nil {
-		errorVerify = s.verifySourcemapUploaded(ctx, *currentUpdate)
+		sourcemapHash, errorVerify = s.verifySourcemapUploaded(ctx, *currentUpdate)
 	}
 	if errorVerify != nil {
 		log.Printf("[RequestID: %s] Invalid update, deleting folder...", params.RequestID)
@@ -269,33 +270,42 @@ func (s *DeploymentService) ProcessUploadedUpdate(ctx context.Context, params Pr
 		log.Printf("[RequestID: %s] Error marking update as checked: %v", params.RequestID, err)
 		return "", err
 	}
+	s.scheduleSourcemapIndex(ctx, *currentUpdate, sourcemapHash)
 	log.Printf("[RequestID: %s] Update marked as checked", params.RequestID)
 	s.recordDeliveryEvent(ctx, auditlog.ActionUpdatePublished, *currentUpdate,
 		map[string]any{"platform": string(params.Platform)})
 	return updateUUID, nil
 }
 
-// verifySourcemapUploaded fails when the update names a source map the store
-// does not hold.
-func (s *DeploymentService) verifySourcemapUploaded(ctx context.Context, update types.Update) error {
+// verifySourcemapUploaded is the update's source map hash, nil without one,
+// and fails when the store does not hold that map.
+func (s *DeploymentService) verifySourcemapUploaded(ctx context.Context, update types.Update) (*string, error) {
 	hash, err := s.updateRepo.GetUpdateSourcemapHash(ctx, update)
-	if err != nil {
-		return err
-	}
-	if hash == nil {
-		return nil
+	if err != nil || hash == nil {
+		return nil, err
 	}
 	if s.sourcemapStore == nil {
-		return fmt.Errorf("sourcemap %s declared but sourcemap uploads are disabled", *hash)
+		return nil, fmt.Errorf("sourcemap %s declared but sourcemap uploads are disabled", *hash)
 	}
 	exists, err := s.sourcemapStore.Exists(ctx, update.AppId, *hash)
 	if err != nil {
-		return fmt.Errorf("checking sourcemap %s: %w", *hash, err)
+		return nil, fmt.Errorf("checking sourcemap %s: %w", *hash, err)
 	}
 	if !exists {
-		return fmt.Errorf("missing sourcemap %s in update", *hash)
+		return nil, fmt.Errorf("missing sourcemap %s in update", *hash)
 	}
-	return nil
+	return hash, nil
+}
+
+// scheduleSourcemapIndex is best effort: the update is live with or without
+// its index.
+func (s *DeploymentService) scheduleSourcemapIndex(ctx context.Context, update types.Update, hash *string) {
+	if hash == nil || s.sourcemapIndexer == nil {
+		return
+	}
+	if err := s.sourcemapIndexer.ScheduleIndex(ctx, update, *hash); err != nil {
+		log.Printf("[sourcemap] scheduling the index of update %s: %v", update.UpdateId, err)
+	}
 }
 
 func getUpdateUUIDFromMetadata(ctx context.Context, update types.Update) string {
@@ -364,22 +374,6 @@ func (s *DeploymentService) MarkUpdateAsChecked(ctx context.Context, update type
 				log.Printf("[bsdiff] scheduling patches for update %s: %v", update.UpdateId, err)
 			}
 		}(update, storedMetadata.Platform)
-	}
-	if updateType == types.NormalUpdate && s.sourcemapIndexer != nil {
-		go func(update types.Update) {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			hash, err := s.updateRepo.GetUpdateSourcemapHash(ctx, update)
-			if err != nil || hash == nil {
-				if err != nil {
-					log.Printf("[sourcemap] reading the sourcemap of update %s: %v", update.UpdateId, err)
-				}
-				return
-			}
-			if err := s.sourcemapIndexer.ScheduleIndex(ctx, update, *hash); err != nil {
-				log.Printf("[sourcemap] scheduling the index of update %s: %v", update.UpdateId, err)
-			}
-		}(update)
 	}
 	return updateUUID, nil
 }
@@ -825,5 +819,6 @@ func (s *DeploymentService) republishUpdateInternal(ctx context.Context, previou
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleSourcemapIndex(ctx, *newUpdate, sourcemapHash)
 	return newUpdate, nil
 }

@@ -35,21 +35,18 @@ func labMap(screen string, onPressLine int) *Map {
 			{Column: 100, Source: 0, OriginalLine: uint32(onPressLine - 1), OriginalColumn: 4, Name: 0},
 			{Column: 400, Source: 1, OriginalLine: 0, OriginalColumn: 16, Name: 1},
 		},
-		Lines: 1,
 	}
 }
-
-const bundle = "/Users/me/Library/Application Support/.expo-internal/cc6bcf26.bundle"
 
 func hermesTrace() string {
 	return strings.Join([]string{
 		"TypeError: Cannot read property 'name' of undefined",
-		"    at onPress (address at " + bundle + ":1:120)",
-		"    at onPress (address at " + bundle + ":1:120)",
-		"    at useState (address at " + bundle + ":1:500)",
+		"    at onPress (address at " + deviceBundle + ":1:120)",
+		"    at onPress (address at " + deviceBundle + ":1:120)",
+		"    at useState (address at " + deviceBundle + ":1:500)",
 		"    ... skipping 40 frames",
 		"    at forEach (native)",
-		"    at unknown (address at " + bundle + ":1:5)",
+		"    at unknown (address at " + deviceBundle + ":1:5)",
 	}, "\n")
 }
 
@@ -96,7 +93,7 @@ func TestSymbolicateLeavesHermesInternalFramesAlone(t *testing.T) {
 	trace := Symbolicate(index, strings.Join([]string{
 		"Error: boom",
 		"    at anonymous (address at InternalBytecode.js:1:120)",
-		"    at onPress (address at " + bundle + ":1:120)",
+		"    at onPress (address at " + deviceBundle + ":1:120)",
 	}, "\n"))
 
 	require.Len(t, trace.Frames, 2)

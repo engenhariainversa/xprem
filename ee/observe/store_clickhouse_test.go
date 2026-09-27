@@ -170,17 +170,7 @@ func TestErrorOccurrencesCountEachErrorOfAnUpdate(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 
 	logRow := func(update, device string, attributes map[string]any, severity uint8, fatal bool, at time.Time) LogRow {
-		row := LogRow{
-			Envelope: Envelope{
-				AppID: appID, EASClientID: device, UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: attributesJSON(attributes), Timestamp: at, ContentKey: uuid.New(),
-			},
-			EventName:      "js.exception",
-			SeverityNumber: severity,
-			IsFatal:        fatal,
-		}
-		row.ErrorFingerprint = fingerprintFor(row, attributes)
-		return row
+		return errorLogRow(appID, update, device, attributes, severity, fatal, at)
 	}
 	fingerprintOf := func(attributes map[string]any) string {
 		return fingerprintFor(LogRow{SeverityNumber: severityError}, attributes).String()
@@ -237,7 +227,6 @@ func labIndex(t *testing.T) *symbolication.Index {
 		Names:          []string{"onPress"},
 		Ignored:        []bool{false},
 		Segments:       []symbolication.Segment{{Column: 100, Source: 0, OriginalLine: 1, OriginalColumn: 2, Name: 0}},
-		Lines:          1,
 	}))
 	index, err := symbolication.OpenIndex(bytes.NewReader(buf.Bytes()))
 	require.NoError(t, err)
@@ -267,15 +256,7 @@ func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
 		"TypeError: Cannot read property 'name' of undefined\n    at onPress (address at "+bundle+":1:120)\n    at forEach (native)")
 	now := time.Now().UTC()
 	logRow := func(update string, attributes map[string]any) LogRow {
-		row := LogRow{
-			Envelope: Envelope{
-				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: attributesJSON(attributes), Timestamp: now, ContentKey: uuid.New(),
-			},
-			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
-		}
-		row.ErrorFingerprint = fingerprintFor(row, attributes)
-		return row
+		return errorLogRow(appID, update, uuid.NewString(), attributes, 21, true, time.Now().UTC())
 	}
 	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, []LogRow{
 		logRow(indexedUpdate, crash), logRow(indexedUpdate, crash), logRow(unmappedUpdate, crash),
@@ -341,15 +322,7 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsItCannotGroup(t *testing.T) {
 		return errorAttributes("Error", "boom", fmt.Sprintf("Error: boom\n    at onPress (address at %s:1:%d)", bundle, offset))
 	}
 	logRow := func(update string, attributes map[string]any) LogRow {
-		row := LogRow{
-			Envelope: Envelope{
-				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: attributesJSON(attributes), Timestamp: time.Now().UTC(), ContentKey: uuid.New(),
-			},
-			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
-		}
-		row.ErrorFingerprint = fingerprintFor(row, attributes)
-		return row
+		return errorLogRow(appID, update, uuid.NewString(), attributes, 21, true, time.Now().UTC())
 	}
 	var rows []LogRow
 	for offset := 0; offset < errorGroupsPerSweep; offset++ {
@@ -383,7 +356,16 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsItCannotGroup(t *testing.T) {
 	assert.True(t, listed[brokenUpdate], "an error with a failed index waits for a reindex")
 }
 
-func attributesJSON(attributes map[string]any) string {
-	out, _ := marshalAttributes(attributes, nil)
-	return out
+// errorLogRow is a js.exception row as the sink stores it.
+func errorLogRow(appID, update, device string, attrs map[string]any, severity uint8, fatal bool, at time.Time) LogRow {
+	attributes, traces := marshalAttributes(attrs, nil)
+	row := LogRow{
+		Envelope: Envelope{
+			AppID: appID, EASClientID: device, UpdateID: update, SessionID: uuid.NewString(),
+			Attributes: attributes, Timestamp: at, ContentKey: uuid.New(),
+		},
+		EventName: "js.exception", SeverityNumber: severity, IsFatal: fatal,
+	}
+	row.ErrorFingerprint = errorFingerprint(row, attrs, traces)
+	return row
 }

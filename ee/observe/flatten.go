@@ -346,18 +346,22 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) (string, 
 	}
 	// Alphabetical, matching the order the client retains, so both ends keep the same attributes past the ceiling.
 	sort.Strings(names)
-	if len(names) > maxAttributesPerRecord {
-		names = names[:maxAttributesPerRecord]
-	}
-
 	kept := make(map[string]any, len(names))
+	for _, key := range []string{exceptionTypeKey, manualTypeKey, exceptionMessageKey, manualMessageKey} {
+		if text, isText := attrs[key].(string); isText {
+			kept[key] = truncateRunes(text, maxAttributeValueRunes)
+		}
+	}
 	traces := readStacktraces(attrs, names)
 	for key, trace := range traces {
 		kept[key] = trace.text
 	}
+	if len(names) > maxAttributesPerRecord {
+		names = names[:maxAttributesPerRecord]
+	}
 	budget := maxAttributesBytes
 	for _, key := range names {
-		if _, isTrace := traces[key]; isTrace {
+		if _, isKept := kept[key]; isKept {
 			continue
 		}
 		value := attrs[key]
@@ -393,8 +397,7 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) (string, 
 }
 
 // contentKey fingerprints a record's client-authored fields, so a batch the SDK re-sends collapses at read time
-// instead of counting twice. Parts are length-prefixed rather than NUL-separated so two fields adjacent on the
-// wire (routeName, customParams) can't be shifted into producing the same hash.
+// instead of counting twice.
 func contentKey(parts ...string) uuid.UUID {
 	return symbolication.Fingerprint(parts...)
 }

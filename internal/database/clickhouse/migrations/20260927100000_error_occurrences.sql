@@ -5,8 +5,9 @@
 ALTER TABLE observe_logs
     ADD COLUMN IF NOT EXISTS error_fingerprint UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000');
 
--- How often each error of an update happened, counted per hour as the logs
--- arrive. Reading the errors of an update reads these rows, never the logs.
+-- How often each error of an update happened, counted per hour of ingestion
+-- as the logs arrive, so an error a device sends late still counts as recent.
+-- Reading the errors of an update reads these rows, never the logs.
 -- A batch the SDK sends twice is counted twice: the logs table only drops
 -- such duplicates at read time, through content_key.
 CREATE TABLE IF NOT EXISTS error_occurrences (
@@ -34,7 +35,7 @@ SELECT
     app_id,
     update_id,
     error_fingerprint,
-    toStartOfHour(timestamp) AS hour,
+    toStartOfHour(ingested_at) AS hour,
     -- The record's type and message under whichever keys it uses, as
     -- ee/observe/fingerprint.go reads them: the SDK's exception.*, the manual
     -- crash event's name and message, else the body, else the event name.

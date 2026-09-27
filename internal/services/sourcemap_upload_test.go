@@ -33,28 +33,18 @@ func sourcemapUpload() SourcemapUploadItem {
 	return SourcemapUploadItem{Path: file.Path, Hash: file.Hash}
 }
 
-func updateIdString(updateId int64) string {
-	return strconv.FormatInt(updateId, 10)
-}
-
 func TestRequestUploadURLs_RequestsTheSourcemapAndRecordsIt(t *testing.T) {
 	svc, h, _ := newSourcemapTestHarness(t)
 	ctx := context.Background()
 	sourcemap := sourcemapUpload()
 
-	resp, err := svc.RequestUploadURLs(ctx, RequestUploadURLParams{
-		RequestID:      "test",
-		AppID:          h.appId,
-		BranchName:     "main",
-		Platform:       "ios",
-		RuntimeVersion: "1",
-		Files:          hashedUploads("metadata.json"),
-		Sourcemap:      &sourcemap,
-	})
+	params := publishParams(h, hashedUploads("metadata.json"))
+	params.Sourcemap = &sourcemap
+	resp, err := svc.RequestUploadURLs(ctx, params)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{launchAssetPath, "metadata.json", sourcemap.Path}, requestedFilePaths(resp))
 
-	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", updateIdString(resp.UpdateID))
+	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", strconv.FormatInt(resp.UpdateID, 10))
 	require.NoError(t, err)
 	hash, err := h.updateRepo.GetUpdateSourcemapHash(ctx, *update)
 	require.NoError(t, err)
@@ -72,25 +62,20 @@ func TestRequestUploadURLs_SkipsASourcemapAlreadyStored(t *testing.T) {
 	sourcemap := sourcemapUpload()
 	require.NoError(t, store.Put(ctx, h.appId, sourcemap.Hash, strings.NewReader(sourcemap.Path)))
 
-	resp, err := svc.RequestUploadURLs(ctx, RequestUploadURLParams{
-		RequestID:      "test",
-		AppID:          h.appId,
-		BranchName:     "main",
-		Platform:       "ios",
-		RuntimeVersion: "1",
-		Files:          hashedUploads("metadata.json"),
-		Sourcemap:      &sourcemap,
-	})
+	params := publishParams(h, hashedUploads("metadata.json"))
+	params.Sourcemap = &sourcemap
+	resp, err := svc.RequestUploadURLs(ctx, params)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{launchAssetPath, "metadata.json"}, requestedFilePaths(resp))
 
-	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", updateIdString(resp.UpdateID))
+	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", strconv.FormatInt(resp.UpdateID, 10))
 	require.NoError(t, err)
 	hash, err := h.updateRepo.GetUpdateSourcemapHash(ctx, *update)
 	require.NoError(t, err)
 	require.NotNil(t, hash)
 	assert.Equal(t, sourcemap.Hash, *hash)
-	require.NoError(t, svc.verifySourcemapUploaded(ctx, *update))
+	_, err = svc.verifySourcemapUploaded(ctx, *update)
+	require.NoError(t, err)
 }
 
 func TestRequestUploadURLs_IgnoresTheSourcemapWhenUploadsAreOff(t *testing.T) {
@@ -98,19 +83,13 @@ func TestRequestUploadURLs_IgnoresTheSourcemapWhenUploadsAreOff(t *testing.T) {
 	ctx := context.Background()
 	sourcemap := sourcemapUpload()
 
-	resp, err := svc.RequestUploadURLs(ctx, RequestUploadURLParams{
-		RequestID:      "test",
-		AppID:          h.appId,
-		BranchName:     "main",
-		Platform:       "ios",
-		RuntimeVersion: "1",
-		Files:          hashedUploads("metadata.json"),
-		Sourcemap:      &sourcemap,
-	})
+	params := publishParams(h, hashedUploads("metadata.json"))
+	params.Sourcemap = &sourcemap
+	resp, err := svc.RequestUploadURLs(ctx, params)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{launchAssetPath, "metadata.json"}, requestedFilePaths(resp))
 
-	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", updateIdString(resp.UpdateID))
+	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", strconv.FormatInt(resp.UpdateID, 10))
 	require.NoError(t, err)
 	hash, err := h.updateRepo.GetUpdateSourcemapHash(ctx, *update)
 	require.NoError(t, err)
@@ -123,40 +102,29 @@ func TestVerifySourcemapUploaded(t *testing.T) {
 	ctx := context.Background()
 	sourcemap := sourcemapUpload()
 
-	resp, err := svc.RequestUploadURLs(ctx, RequestUploadURLParams{
-		RequestID:      "test",
-		AppID:          h.appId,
-		BranchName:     "main",
-		Platform:       "ios",
-		RuntimeVersion: "1",
-		Files:          hashedUploads("metadata.json"),
-		Sourcemap:      &sourcemap,
-	})
+	params := publishParams(h, hashedUploads("metadata.json"))
+	params.Sourcemap = &sourcemap
+	resp, err := svc.RequestUploadURLs(ctx, params)
 	require.NoError(t, err)
-	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", updateIdString(resp.UpdateID))
+	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", strconv.FormatInt(resp.UpdateID, 10))
 	require.NoError(t, err)
 
-	err = svc.verifySourcemapUploaded(ctx, *update)
+	_, err = svc.verifySourcemapUploaded(ctx, *update)
 	require.ErrorContains(t, err, "missing sourcemap")
 
 	require.NoError(t, store.Put(ctx, h.appId, sourcemap.Hash, strings.NewReader(sourcemap.Path)))
-	require.NoError(t, svc.verifySourcemapUploaded(ctx, *update))
+	_, err = svc.verifySourcemapUploaded(ctx, *update)
+	require.NoError(t, err)
 }
 
 func TestVerifySourcemapUploaded_NothingDeclared(t *testing.T) {
 	svc, h := newDedupTestHarness(t)
 	ctx := context.Background()
 
-	resp, err := svc.RequestUploadURLs(ctx, RequestUploadURLParams{
-		RequestID:      "test",
-		AppID:          h.appId,
-		BranchName:     "main",
-		Platform:       "ios",
-		RuntimeVersion: "1",
-		Files:          hashedUploads("metadata.json"),
-	})
+	resp, err := svc.RequestUploadURLs(ctx, publishParams(h, hashedUploads("metadata.json")))
 	require.NoError(t, err)
-	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", updateIdString(resp.UpdateID))
+	update, err := h.updateRepo.GetUpdate(ctx, h.appId, "main", "1", strconv.FormatInt(resp.UpdateID, 10))
 	require.NoError(t, err)
-	require.NoError(t, svc.verifySourcemapUploaded(ctx, *update))
+	_, err = svc.verifySourcemapUploaded(ctx, *update)
+	require.NoError(t, err)
 }

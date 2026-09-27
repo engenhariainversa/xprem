@@ -2597,30 +2597,21 @@ WHERE b.app_id = sqlc.arg('app_id')
   AND bp.target_update_id = sqlc.arg('target_update_id')
 ORDER BY s.id DESC;
 
--- name: UpsertSourcemapIndexPending :execrows
--- App-scoped: the branch lookup refuses a branch of another app. Re-inserting
--- an existing row resets it, which is what a reindex wants.
-INSERT INTO sourcemap_indexes (branch_id, update_id, hash, status)
-SELECT b.id, sqlc.arg('update_id'), sqlc.arg('hash'), 'pending'
+-- name: UpsertSourcemapIndex :execrows
+-- App-scoped: the branch lookup refuses a branch of another app. An existing
+-- row is reset.
+INSERT INTO sourcemap_indexes (branch_id, update_id, hash, status, attempts)
+SELECT b.id, sqlc.arg('update_id'), sqlc.arg('hash'), sqlc.arg('status'), sqlc.arg('attempts')
 FROM branches b
 WHERE b.app_id = sqlc.arg('app_id') AND b.name = sqlc.arg('branch_name')
 ON CONFLICT (branch_id, update_id) DO UPDATE
 SET hash = EXCLUDED.hash,
-    status = 'pending',
+    status = EXCLUDED.status,
+    attempts = EXCLUDED.attempts,
     reason = NULL,
     segments = NULL,
     index_size = NULL,
-    attempts = 0,
     updated_at = CURRENT_TIMESTAMP;
-
--- name: SetSourcemapIndexRunning :execrows
-UPDATE sourcemap_indexes si
-SET status = 'running', attempts = si.attempts + 1, updated_at = CURRENT_TIMESTAMP
-FROM branches b
-WHERE b.id = si.branch_id
-  AND b.app_id = sqlc.arg('app_id')
-  AND b.name = sqlc.arg('branch_name')
-  AND si.update_id = sqlc.arg('update_id');
 
 -- name: FinishSourcemapIndex :execrows
 UPDATE sourcemap_indexes si

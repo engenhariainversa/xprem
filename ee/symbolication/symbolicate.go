@@ -221,12 +221,10 @@ func trimLine(text string, column int) string {
 	return trimmed
 }
 
-// GroupFingerprint names an error the same way in every update, as Sentry
-// does: by its type and the in-app frames it went through, each frame by its
-// file and its line of code, or its function when the code is unknown. The
-// line number is left out, since the same code moves from one update to the
-// next. Without in-app frames every mapped frame counts; without frames at
-// all, the message does.
+// GroupFingerprint names an error the same way in every update: by its type
+// and the in-app frames it went through, each frame by its file and its line
+// of code, or its function when the code is unknown. Without in-app frames
+// every mapped frame counts; without frames at all, the message does.
 func GroupFingerprint(errorType, message string, trace Trace) uuid.UUID {
 	frames := groupKeys(trace, func(frame TraceFrame) bool { return frame.Origin != nil && frame.Origin.InApp })
 	if len(frames) == 0 {

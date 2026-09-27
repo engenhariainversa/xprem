@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import {
+  defaultRange,
   describeRange,
   formatAbsolute,
   parseTimeExpression,
@@ -173,13 +174,13 @@ export const TimeRangePicker = ({
   className?: string;
 }) => {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<TimeRange>({ from: 'now-24h', to: 'now' });
+  const [draft, setDraft] = useState<TimeRange>(defaultRange);
   const [search, setSearch] = useState('');
   const [recent, setRecent] = useState<TimeRange[]>([]);
 
   const openPicker = (next: boolean) => {
     if (next) {
-      setDraft(value ?? { from: 'now-24h', to: 'now' });
+      setDraft(value ?? defaultRange);
       setSearch('');
       setRecent(readRecentRanges().filter(range => rangeLengthMs(range, Date.now()) <= maxRangeMs));
     }

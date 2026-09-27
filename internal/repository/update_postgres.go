@@ -56,14 +56,15 @@ func (s *PostgresUpdateRepository) GetUpdateDetails(ctx context.Context, appId s
 		updateUUID = update.UpdateUuid.String()
 	}
 	details := types.UpdateDetails{
-		UpdateUUID: updateUUID,
-		UpdateId:   strconv.FormatInt(update.ID, 10),
-		CreatedAt:  update.CreatedAt.Time.Format(time.RFC3339),
-		CommitHash: update.CommitHash,
-		Platform:   types.Platform(update.Platform),
-		Message:    messageStr,
-		Type:       types.UpdateType(update.UpdateType),
-		ExpoConfig: string(expoConfig),
+		UpdateUUID:    updateUUID,
+		UpdateId:      strconv.FormatInt(update.ID, 10),
+		CreatedAt:     update.CreatedAt.Time.Format(time.RFC3339),
+		CommitHash:    update.CommitHash,
+		Platform:      types.Platform(update.Platform),
+		Message:       messageStr,
+		Type:          types.UpdateType(update.UpdateType),
+		ExpoConfig:    string(expoConfig),
+		SourcemapHash: update.SourcemapHash,
 	}
 	if update.RolloutPercentage != nil {
 		pct := int(*update.RolloutPercentage)
@@ -73,7 +74,6 @@ func (s *PostgresUpdateRepository) GetUpdateDetails(ctx context.Context, appId s
 		control := strconv.FormatInt(*update.ControlUpdateID, 10)
 		details.ControlUpdateId = &control
 	}
-	details.SourcemapHash = update.SourcemapHash
 	return details, nil
 }
 

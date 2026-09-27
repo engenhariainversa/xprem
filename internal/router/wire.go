@@ -291,22 +291,19 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	updateService := services.NewUpdateService(updateRepo)
 	bsDiffService := services.NewBSDiffService(resolvedBucket.BlobStore, resolvedBucket.PatchStore, jobsClient, updateService, updateRepo, bundlePatchRepo)
 	expoImportService := expoimport.NewService(appService, branchService, channelService, updateRepo, jobsClient, resolvedBucket.BlobStore, resolvedBucket.UpdateStore)
-	var sourcemapStore *bucket.SourcemapStore
+	// nil unless UPLOAD_SOURCEMAPS is on, which needs the control plane.
+	sourcemapStore, err := bucket.OpenSourcemapStore()
+	if err != nil {
+		log.Fatalf("UPLOAD_SOURCEMAPS is enabled but %v", err)
+	}
 	var symbolicationService *symbolication.Service
-	if config.IsSourcemapUploadEnabled() {
-		store, err := bucket.OpenSourcemapStore()
-		if err != nil {
-			log.Fatalf("UPLOAD_SOURCEMAPS is enabled but %v", err)
-		}
-		sourcemapStore = store
+	if sourcemapStore != nil {
 		// CDN_BASE_URL fronts a publicly readable bucket, and a source map
 		// embeds the app's source code.
 		if sourcemapStore.SharesUpdatesLocation() && cdn.ResolvedType() == "generic" {
 			log.Fatalf("UPLOAD_SOURCEMAPS: source maps cannot share the updates bucket when CDN_BASE_URL serves it; point them at a dedicated bucket")
 		}
-		if jobsClient != nil && sourcemapIndexRepo != nil {
-			symbolicationService = symbolication.NewService(sourcemapStore, sourcemapIndexRepo, jobsClient)
-		}
+		symbolicationService = symbolication.NewService(sourcemapStore, sourcemapIndexRepo, jobsClient)
 	}
 	if jobsClient != nil {
 		expoimport.RegisterWorker(jobsClient.Workers(), expoImportService)
@@ -333,9 +330,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	deploymentService.SetOnAuditEvent(auditService.Record)
 	if sourcemapStore != nil {
 		deploymentService.SetSourcemapStore(sourcemapStore)
-		if symbolicationService != nil {
-			deploymentService.SetSourcemapIndexer(symbolicationService)
-		}
+		deploymentService.SetSourcemapIndexer(symbolicationService)
 	}
 	bsDiffService.SetOnAuditEvent(auditService.Record)
 	rolloutService := services.NewRolloutService(rolloutRepo, channelRepo, updateRepo, deploymentService)

@@ -16,13 +16,8 @@ const Detail = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-// The attributes known to hold the exception's own trace, the one its group
-// symbolicates: the SDK's key, and the one the manual xprem_js_crash event
-// carried. Any other attribute keeps its key as title.
-const traceAttributes: Record<string, { title: string; exception: boolean }> = {
-  'exception.stacktrace': { title: 'Stack trace', exception: true },
-  stack: { title: 'Stack trace', exception: true },
-};
+// The attributes holding the exception's own trace, the one its group symbolicates.
+const exceptionTraceKeys = new Set(['exception.stacktrace', 'stack']);
 
 // Splits the attributes into the stack traces they hold and everything else,
 // so a trace shows as frames rather than as one unreadable string.
@@ -34,7 +29,9 @@ const splitStackTraces = (attributes: Json | null) => {
   const rest: Record<string, Json> = {};
   for (const [key, value] of Object.entries(attributes)) {
     const trace =
-      typeof value === 'string' ? parseStackTrace(value, key in traceAttributes ? 1 : 2) : null;
+      typeof value === 'string'
+        ? parseStackTrace(value, exceptionTraceKeys.has(key) ? 1 : 2)
+        : null;
     if (trace && typeof value === 'string') traces.push({ key, trace, raw: value });
     else rest[key] = value;
   }
@@ -75,12 +72,12 @@ export const LogDetails = ({ log }: { log: ObserveLog }) => {
       {traces.map(({ key, trace, raw }) => (
         <div key={key} className="mt-4">
           <StackTraceView
-            title={traceAttributes[key]?.title ?? key}
+            title={exceptionTraceKeys.has(key) ? 'Stack trace' : key}
             trace={trace}
             raw={raw}
             // The group symbolicates the exception's own trace, not a component stack.
             errorGroup={
-              traceAttributes[key]?.exception && log.errorFingerprint
+              exceptionTraceKeys.has(key) && log.errorFingerprint
                 ? { updateId: log.updateId, fingerprint: log.errorFingerprint }
                 : undefined
             }

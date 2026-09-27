@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"time"
 	"xprem/ee/symbolication"
-
-	"github.com/google/uuid"
 )
 
 // ErrorGroup is what an error of an update is, once one of its traces went
@@ -42,7 +40,7 @@ type groupedError struct {
 }
 
 // noGroupFingerprint is the group of an error whose update has no source map.
-var noGroupFingerprint = uuid.Nil.String()
+const noGroupFingerprint = ZeroUpdateID
 
 // ReadErrorGroup answers nil when the error has no group.
 func (e *Explorer) ReadErrorGroup(ctx context.Context, appID, updateID, fingerprint string) (*ErrorGroup, error) {
@@ -87,7 +85,7 @@ func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limi
 		      WHERE (app_id, update_id) IN (
 		          SELECT app_id, update_id FROM error_occurrences WHERE hour >= ?))
 		GROUP BY app_id, update_id, error_fingerprint
-		ORDER BY sum(occurrences) DESC, error_fingerprint
+		ORDER BY sum(occurrences) DESC, app_id, update_id, error_fingerprint
 		LIMIT ? OFFSET ?`, since, since, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("listing the errors without a group: %w", err)
@@ -140,7 +138,7 @@ func (e *Explorer) writeErrorGroups(ctx context.Context, groups []groupedError) 
 		if err != nil {
 			return err
 		}
-		if err := batch.Append(group.appID, group.updateID, group.Fingerprint, group.GroupFingerprint,
+		if err := batch.Append(group.appID, group.updateID, group.fingerprint, group.GroupFingerprint,
 			group.ErrorType, group.Message, group.Culprit, string(trace), group.SymbolicatedAt); err != nil {
 			return err
 		}

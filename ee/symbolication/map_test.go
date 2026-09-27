@@ -22,7 +22,6 @@ const cartMap = `{
 func TestParseDecodesSegments(t *testing.T) {
 	m, err := Parse([]byte(cartMap))
 	require.NoError(t, err)
-	assert.Equal(t, 1, m.Lines)
 	require.Len(t, m.Segments, 36)
 	assert.Equal(t, Segment{Column: 17, Source: 0, OriginalLine: 0, OriginalColumn: 17, Name: 0}, m.Segments[2], "third segment names cart")
 	assert.Equal(t, Segment{Column: 22, Source: 0, OriginalLine: 1, OriginalColumn: 2, Name: NoIndex}, m.Segments[5], "a negative column delta moves back to the start of line 2")
@@ -32,7 +31,6 @@ func TestParseDecodesSegments(t *testing.T) {
 func TestParseRestartsTheColumnOnEachGeneratedLine(t *testing.T) {
 	m, err := Parse([]byte(`{"version":3,"sources":["a.js"],"names":[],"mappings":"AAAA,SAAS;IAAI"}`))
 	require.NoError(t, err)
-	assert.Equal(t, 2, m.Lines)
 	require.Len(t, m.Segments, 3)
 	assert.Equal(t, Segment{Line: 1, Column: 4, Source: 0, OriginalLine: 0, OriginalColumn: 13, Name: NoIndex}, m.Segments[2])
 
@@ -71,6 +69,7 @@ func TestParseRefusesUnusableMaps(t *testing.T) {
 		"bad character":   `{"version":3,"sources":["a"],"names":[],"mappings":"AA!A"}`,
 		"source overflow": `{"version":3,"sources":["a"],"names":[],"mappings":"AEAA"}`,
 		"truncated vlq":   `{"version":3,"sources":["a"],"names":[],"mappings":"g"}`,
+		"column overflow": `{"version":3,"sources":["a"],"names":[],"mappings":"ggggggIAAA"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(data))

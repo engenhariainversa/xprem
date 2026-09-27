@@ -7,7 +7,6 @@ package symbolication
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 	"xprem/internal/database"
 	"xprem/internal/database/postgres/pgdb"
@@ -19,7 +18,9 @@ import (
 // dashboard reads; River's own rows are purged within days.
 type IndexRepository interface {
 	MarkPending(ctx context.Context, update types.Update, hash string) error
-	MarkRunning(ctx context.Context, update types.Update) error
+	// MarkRunning records the attempt about to run, creating the record when
+	// the job was scheduled without one.
+	MarkRunning(ctx context.Context, update types.Update, hash string, attempt int) error
 	Finish(ctx context.Context, update types.Update, status types.SourcemapIndexStatus, reason string, segments *int, indexSize *int64) error
 	// GetUpdateSourcemap answers nil when the update does not exist.
 	GetUpdateSourcemap(ctx context.Context, appId, branch, runtimeVersion, updateId string) (*UpdateSourcemap, error)
@@ -44,29 +45,31 @@ func NewPostgresIndexRepository(engine *database.Engine) *PostgresIndexRepositor
 	return &PostgresIndexRepository{engine: engine}
 }
 
-func updateID(update types.Update) (int64, error) {
-	id, err := strconv.ParseInt(update.UpdateId, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse update id: %w", err)
-	}
-	return id, nil
-}
-
 // MarkPending records an index job about to be scheduled, resetting the row
 // if the map was already handled.
 func (r *PostgresIndexRepository) MarkPending(ctx context.Context, update types.Update, hash string) error {
-	id, err := updateID(update)
+	return r.upsert(ctx, update, hash, types.SourcemapIndexPending, 0)
+}
+
+func (r *PostgresIndexRepository) MarkRunning(ctx context.Context, update types.Update, hash string, attempt int) error {
+	return r.upsert(ctx, update, hash, types.SourcemapIndexRunning, attempt)
+}
+
+func (r *PostgresIndexRepository) upsert(ctx context.Context, update types.Update, hash string, status types.SourcemapIndexStatus, attempts int) error {
+	id, err := repository.ParseUpdateID("update id", update.UpdateId)
 	if err != nil {
 		return err
 	}
-	rows, err := r.engine.Queries.UpsertSourcemapIndexPending(ctx, pgdb.UpsertSourcemapIndexPendingParams{
+	rows, err := r.engine.Queries.UpsertSourcemapIndex(ctx, pgdb.UpsertSourcemapIndexParams{
 		UpdateID:   id,
 		Hash:       hash,
+		Status:     status,
+		Attempts:   int32(attempts),
 		AppID:      repository.ToPgUUID(update.AppId),
 		BranchName: update.Branch,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to record the pending sourcemap index in database: %w", err)
+		return fmt.Errorf("failed to mark the sourcemap index %s in database: %w", status, err)
 	}
 	if rows == 0 {
 		return fmt.Errorf("branch %q of app %s not found", update.Branch, update.AppId)
@@ -74,28 +77,9 @@ func (r *PostgresIndexRepository) MarkPending(ctx context.Context, update types.
 	return nil
 }
 
-func (r *PostgresIndexRepository) MarkRunning(ctx context.Context, update types.Update) error {
-	id, err := updateID(update)
-	if err != nil {
-		return err
-	}
-	rows, err := r.engine.Queries.SetSourcemapIndexRunning(ctx, pgdb.SetSourcemapIndexRunningParams{
-		AppID:      repository.ToPgUUID(update.AppId),
-		BranchName: update.Branch,
-		UpdateID:   id,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to mark the sourcemap index running in database: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("no sourcemap index record for update %s on branch %s", update.UpdateId, update.Branch)
-	}
-	return nil
-}
-
 // Finish records how the job ended. reason is empty for a stored index.
 func (r *PostgresIndexRepository) Finish(ctx context.Context, update types.Update, status types.SourcemapIndexStatus, reason string, segments *int, indexSize *int64) error {
-	id, err := updateID(update)
+	id, err := repository.ParseUpdateID("update id", update.UpdateId)
 	if err != nil {
 		return err
 	}
@@ -127,7 +111,7 @@ func (r *PostgresIndexRepository) Finish(ctx context.Context, update types.Updat
 }
 
 func (r *PostgresIndexRepository) GetUpdateSourcemap(ctx context.Context, appId, branch, runtimeVersion, updateId string) (*UpdateSourcemap, error) {
-	id, err := updateID(types.Update{UpdateId: updateId})
+	id, err := repository.ParseUpdateID("update id", updateId)
 	if err != nil {
 		return nil, err
 	}

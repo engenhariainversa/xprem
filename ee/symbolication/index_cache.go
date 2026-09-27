@@ -6,6 +6,7 @@ package symbolication
 
 import (
 	"bytes"
+	"slices"
 	"sync"
 )
 
@@ -13,8 +14,8 @@ import (
 // used one leaves first.
 const maxIndexCacheBytes = 256 << 20
 
-// indexCache keeps whole indexes in memory by map hash, so the frames of one
-// update are looked up without reading the store again.
+// indexCache keeps whole indexes in memory by app and map hash, so the frames
+// of one update are looked up without reading the store again.
 type indexCache struct {
 	mu    sync.Mutex
 	items map[string]cachedIndex
@@ -68,11 +69,8 @@ func (c *indexCache) put(hash string, data []byte) (*Index, error) {
 
 // touch moves a hash to the most recently used end.
 func (c *indexCache) touch(hash string) {
-	for i, other := range c.order {
-		if other == hash {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			break
-		}
+	if i := slices.Index(c.order, hash); i >= 0 {
+		c.order = slices.Delete(c.order, i, i+1)
 	}
 	c.order = append(c.order, hash)
 }

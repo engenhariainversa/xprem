@@ -13,8 +13,8 @@ function descend(depth: number): number {
   return descend(depth - 1) + 1
 }
 
-function recurseForever(depth: number): number {
-  return recurseForever(depth + 1) + 1
+function recurseForever(): number {
+  return recurseForever() + 1
 }
 
 function Action({
@@ -131,7 +131,7 @@ export function LabScreen({
           description="Infinite recursion, RangeError: does Hermes skip frames itself?"
           onPress={() => {
             try {
-              recurseForever(0)
+              recurseForever()
             } catch (error) {
               Observe.reportError(error)
             }

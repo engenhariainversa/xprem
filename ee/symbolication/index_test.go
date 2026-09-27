@@ -52,7 +52,6 @@ func TestSourceTextIsReadBySpan(t *testing.T) {
 		SourcesContent: []string{"const a = 1;\nexport default a;\n", "", "let b;"},
 		Ignored:        []bool{false, false, true},
 		Segments:       []Segment{{Column: 0, Source: 0, Name: NoIndex}, {Column: 20, Source: 2, Name: NoIndex}},
-		Lines:          1,
 	}
 	index := openIndexOf(t, m)
 	for i, want := range m.SourcesContent {
@@ -94,9 +93,9 @@ func TestLookupAgreesWithLinearScanAcrossFences(t *testing.T) {
 		}
 		segments = append(segments, s)
 	}
-	m := &Map{Sources: sources, Names: names, Ignored: []bool{false, false, true}, Segments: segments, Lines: 1, FunctionOffsets: []uint32{0, 100, 5000}}
+	m := &Map{Sources: sources, Names: names, Ignored: []bool{false, false, true}, Segments: segments}
 	index := openIndexOf(t, m)
-	require.Equal(t, len(segments), index.SegmentCount())
+	require.Equal(t, len(segments), int(index.h.SegmentCount))
 
 	for trial := 0; trial < 2000; trial++ {
 		target := uint32(rng.Intn(int(column) + 50))
@@ -119,14 +118,6 @@ func TestLookupAgreesWithLinearScanAcrossFences(t *testing.T) {
 		assert.Equal(t, want.Source == 2, pos.Ignored)
 	}
 
-	pos, ok, err := index.LookupHermesFunction(1, 7)
-	require.NoError(t, err)
-	direct, _, _ := index.Lookup(0, 107)
-	assert.True(t, ok)
-	assert.Equal(t, direct, pos, "function 1 starts at offset 100")
-	_, ok, err = index.LookupHermesFunction(9, 0)
-	require.NoError(t, err)
-	assert.False(t, ok)
 }
 
 // The Hermes map of the example app, when its export is present. Every
@@ -140,8 +131,6 @@ func TestHermesExampleMap(t *testing.T) {
 	require.NoError(t, err)
 	m, err := Parse(data)
 	require.NoError(t, err)
-	assert.Equal(t, 1, m.Lines, "a Hermes map has one generated line")
-	assert.NotEmpty(t, m.FunctionOffsets)
 	var raw struct {
 		Sources        []string  `json:"sources"`
 		SourcesContent []*string `json:"sourcesContent"`

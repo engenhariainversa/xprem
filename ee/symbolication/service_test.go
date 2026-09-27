@@ -78,9 +78,11 @@ func (r *fakeIndexes) MarkPending(_ context.Context, _ types.Update, hash string
 	return nil
 }
 
-func (r *fakeIndexes) MarkRunning(context.Context, types.Update) error {
-	r.record.Status = types.SourcemapIndexRunning
-	r.record.Attempts++
+func (r *fakeIndexes) MarkRunning(_ context.Context, _ types.Update, hash string, attempt int) error {
+	if r.record == nil {
+		r.record = &types.SourcemapIndex{Hash: hash}
+	}
+	r.record.Status, r.record.Attempts = types.SourcemapIndexRunning, attempt
 	return nil
 }
 

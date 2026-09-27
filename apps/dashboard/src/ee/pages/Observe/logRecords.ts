@@ -31,17 +31,6 @@ export const severityDot = (log: ObserveLog) => {
   return 'bg-muted-foreground';
 };
 
-const parseAttributes = (value: string): Record<string, unknown> => {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-};
-
 const firstText = (attributes: Record<string, unknown>, keys: string[]) => {
   for (const key of keys) {
     const value = attributes[key];
@@ -54,7 +43,9 @@ const firstText = (attributes: Record<string, unknown>, keys: string[]) => {
 // part lives in the attributes.
 export const logMessage = (log: ObserveLog) => {
   if (log.body.trim()) return log.body.trim();
-  const attributes = parseAttributes(log.attributes);
+  const document = parseJsonDocument(log.attributes);
+  const attributes =
+    document && typeof document === 'object' && !Array.isArray(document) ? document : {};
   return (
     firstText(attributes, [
       'exception.message',

@@ -503,9 +503,10 @@ export default class Publish extends Command {
 
       uploadFilesSpinner.succeed('✅ Files uploaded successfully');
       for (const { platform: uploadedPlatform, uploadRequests } of uploadUrls) {
+        const sourcemapPath = buildSourcemapUpload(files, uploadedPlatform)?.path;
         const totalFiles =
           buildUploadFiles(files, uploadedPlatform).length +
-          (buildSourcemapUpload(files, uploadedPlatform) ? 1 : 0);
+          (uploadRequests.some(r => r.originalFileName === sourcemapPath) ? 1 : 0);
         const deduplicated = totalFiles - uploadRequests.length;
         Log.withInfo(
           `📊 ${uploadedPlatform}: ${uploadRequests.length}/${totalFiles} files uploaded, ${deduplicated} deduplicated (already on the server)`

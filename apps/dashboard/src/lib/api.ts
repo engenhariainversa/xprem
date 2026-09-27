@@ -731,7 +731,7 @@ export type SourcemapIndexRecord = {
 // An update's source map: its hash and, once a job handled it, the index
 // record. index is null for a map no job ever recorded.
 export type UpdateSourcemapRecord = {
-  hash: string;
+  hash: string | null;
   index: SourcemapIndexRecord | null;
 };
 

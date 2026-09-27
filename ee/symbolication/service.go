@@ -40,11 +40,10 @@ var (
 const maxMapSize = 128 << 20
 
 type Service struct {
-	store   IndexStore
-	indexes IndexRepository
-	jobs    *jobs.Client
-	cache   *indexCache
-	// licenseValid is a field, not a direct call, so tests can pin it without a signed key.
+	store        IndexStore
+	indexes      IndexRepository
+	jobs         *jobs.Client
+	cache        *indexCache
 	licenseValid func() bool
 }
 
@@ -62,25 +61,6 @@ func (s *Service) GetUpdateSourcemap(ctx context.Context, appId, branch, runtime
 	if !s.available() {
 		return nil, ErrUnavailable
 	}
-	return s.updateSourcemap(ctx, appId, branch, runtimeVersion, updateId)
-}
-
-// Reindex schedules the index of an update's map again, as its publish did.
-func (s *Service) Reindex(ctx context.Context, appId, branch, runtimeVersion, updateId string) error {
-	if !s.available() {
-		return ErrUnavailable
-	}
-	sourcemap, err := s.updateSourcemap(ctx, appId, branch, runtimeVersion, updateId)
-	if err != nil {
-		return err
-	}
-	update := types.Update{AppId: appId, Branch: branch, RuntimeVersion: runtimeVersion, UpdateId: updateId}
-	return s.scheduleIndex(ctx, update, *sourcemap.Hash, true)
-}
-
-// updateSourcemap reads the update's map in one query; an update without one
-// is ErrNoSourcemap.
-func (s *Service) updateSourcemap(ctx context.Context, appId, branch, runtimeVersion, updateId string) (*UpdateSourcemap, error) {
 	if err := validation.Name("branchName", branch); err != nil {
 		return nil, err
 	}
@@ -98,6 +78,16 @@ func (s *Service) updateSourcemap(ctx context.Context, appId, branch, runtimeVer
 		return nil, ErrNoSourcemap
 	}
 	return sourcemap, nil
+}
+
+// Reindex schedules the index of an update's map again, as its publish did.
+func (s *Service) Reindex(ctx context.Context, appId, branch, runtimeVersion, updateId string) error {
+	sourcemap, err := s.GetUpdateSourcemap(ctx, appId, branch, runtimeVersion, updateId)
+	if err != nil {
+		return err
+	}
+	update := types.Update{AppId: appId, Branch: branch, RuntimeVersion: runtimeVersion, UpdateId: updateId}
+	return s.scheduleIndex(ctx, update, *sourcemap.Hash, true)
 }
 
 const indexJobKind = "sourcemap-index"
@@ -147,9 +137,8 @@ func RegisterWorker(workers *river.Workers, service *Service) {
 	river.AddWorker(workers, &indexWorker{service: service})
 }
 
-// ScheduleIndex records the update's map as pending, then inserts the job: the
-// worker can start the moment the job exists, and must find the row. A no-op
-// when indexing is unavailable.
+// ScheduleIndex records the update's map as pending and queues its index job.
+// A no-op when indexing is unavailable.
 func (s *Service) ScheduleIndex(ctx context.Context, update types.Update, hash string) error {
 	return s.scheduleIndex(ctx, update, hash, false)
 }
@@ -158,8 +147,8 @@ func (s *Service) scheduleIndex(ctx context.Context, update types.Update, hash s
 	if !s.available() {
 		return nil
 	}
-	// A rebuild resets the record only once River took the job, so a refused
-	// one leaves the record as it was.
+	// A publish records the job as queued; a rebuild leaves the record to the
+	// worker, so a refused one changes nothing.
 	if !rebuild {
 		if err := s.indexes.MarkPending(ctx, update, hash); err != nil {
 			return err
@@ -183,9 +172,6 @@ func (s *Service) scheduleIndex(ctx context.Context, update types.Update, hash s
 	if err != nil {
 		return fmt.Errorf("enqueue sourcemap index of update %s: %w", update.UpdateId, err)
 	}
-	if rebuild {
-		return s.indexes.MarkPending(ctx, update, hash)
-	}
 	return nil
 }
 
@@ -200,7 +186,7 @@ type indexOutcome struct {
 func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) error {
 	args := job.Args
 	update := types.Update{AppId: args.AppId, Branch: args.Branch, RuntimeVersion: args.RuntimeVersion, UpdateId: args.UpdateId}
-	s.record(update, func() error { return s.indexes.MarkRunning(ctx, update) })
+	s.record(update, func() error { return s.indexes.MarkRunning(ctx, update, args.Hash, job.Attempt) })
 
 	outcome, err := s.buildIndex(ctx, args.AppId, args.Hash, args.Rebuild)
 	if err == nil {
@@ -249,7 +235,11 @@ func (s *Service) buildIndex(ctx context.Context, appId, hash string, rebuild bo
 			return indexOutcome{}, fmt.Errorf("checking the index of map %s: %w", hash, err)
 		}
 		if exists {
-			return s.existingIndex(ctx, appId, hash)
+			outcome, err := s.existingIndex(ctx, appId, hash)
+			// An index of an older format is written again.
+			if !errors.Is(err, ErrInvalidIndex) {
+				return outcome, err
+			}
 		}
 	}
 	file, err := s.store.Get(ctx, appId, hash)
@@ -271,12 +261,12 @@ func (s *Service) buildIndex(ctx context.Context, appId, hash string, rebuild bo
 	if err != nil {
 		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: %v", types.SourcemapIndexReasonMapInvalid, err))
 	}
+	if IndexSize(m) > maxIndexCacheBytes {
+		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: the index of map %s exceeds %d MB", types.SourcemapIndexReasonIndexTooLarge, hash, maxIndexCacheBytes>>20))
+	}
 	var index bytes.Buffer
 	if err := WriteIndex(&index, m); err != nil {
 		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: %v", types.SourcemapIndexReasonMapInvalid, err))
-	}
-	if index.Len() > maxIndexCacheBytes {
-		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: the index of map %s exceeds %d MB", types.SourcemapIndexReasonIndexTooLarge, hash, maxIndexCacheBytes>>20))
 	}
 	if err := s.store.PutIndex(ctx, appId, hash, bytes.NewReader(index.Bytes())); err != nil {
 		return indexOutcome{}, fmt.Errorf("storing the index of map %s: %w", hash, err)
@@ -289,8 +279,11 @@ func (s *Service) buildIndex(ctx context.Context, appId, hash string, rebuild bo
 // built.
 func (s *Service) existingIndex(ctx context.Context, appId, hash string) (indexOutcome, error) {
 	file, err := s.store.GetIndex(ctx, appId, hash)
-	if err != nil || file == nil {
-		return indexOutcome{}, fmt.Errorf("reading the index of map %s: %v", hash, err)
+	if err != nil {
+		return indexOutcome{}, fmt.Errorf("reading the index of map %s: %w", hash, err)
+	}
+	if file == nil {
+		return indexOutcome{}, fmt.Errorf("the index of map %s is not in the store", hash)
 	}
 	defer file.Reader.Close()
 	segments, err := ReadSegmentCount(file.Reader)
@@ -311,7 +304,7 @@ func (s *Service) OpenUpdateIndex(ctx context.Context, appId, updateUUID string)
 	if err != nil {
 		return nil, err
 	}
-	if index, ok := s.cache.get(hash); ok {
+	if index, ok := s.cache.get(appId + "/" + hash); ok {
 		return index, nil
 	}
 	file, err := s.store.GetIndex(ctx, appId, hash)
@@ -329,7 +322,11 @@ func (s *Service) OpenUpdateIndex(ctx context.Context, appId, updateUUID string)
 	if len(data) > maxIndexCacheBytes {
 		return nil, fmt.Errorf("%w: the index of map %s exceeds %d MB", ErrIndexFailed, hash, maxIndexCacheBytes>>20)
 	}
-	return s.cache.put(hash, data)
+	index, err := s.cache.put(appId+"/"+hash, data)
+	if errors.Is(err, ErrInvalidIndex) {
+		return nil, fmt.Errorf("%w: %v", ErrIndexFailed, err)
+	}
+	return index, err
 }
 
 // UpdateIndexState is OpenUpdateIndex's answer without opening anything: nil

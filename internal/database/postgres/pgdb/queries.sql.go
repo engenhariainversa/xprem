@@ -5846,30 +5846,6 @@ func (q *Queries) SetBundlePatchRunning(ctx context.Context, arg SetBundlePatchR
 	return result.RowsAffected(), nil
 }
 
-const setSourcemapIndexRunning = `-- name: SetSourcemapIndexRunning :execrows
-UPDATE sourcemap_indexes si
-SET status = 'running', attempts = si.attempts + 1, updated_at = CURRENT_TIMESTAMP
-FROM branches b
-WHERE b.id = si.branch_id
-  AND b.app_id = $1
-  AND b.name = $2
-  AND si.update_id = $3
-`
-
-type SetSourcemapIndexRunningParams struct {
-	AppID      pgtype.UUID `json:"app_id"`
-	BranchName string      `json:"branch_name"`
-	UpdateID   int64       `json:"update_id"`
-}
-
-func (q *Queries) SetSourcemapIndexRunning(ctx context.Context, arg SetSourcemapIndexRunningParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setSourcemapIndexRunning, arg.AppID, arg.BranchName, arg.UpdateID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const setUpdateAssetMapping = `-- name: SetUpdateAssetMapping :execresult
 UPDATE updates
 SET asset_mapping = $2
@@ -6823,34 +6799,38 @@ func (q *Queries) UpsertSSOConfig(ctx context.Context, arg UpsertSSOConfigParams
 	return i, err
 }
 
-const upsertSourcemapIndexPending = `-- name: UpsertSourcemapIndexPending :execrows
-INSERT INTO sourcemap_indexes (branch_id, update_id, hash, status)
-SELECT b.id, $1, $2, 'pending'
+const upsertSourcemapIndex = `-- name: UpsertSourcemapIndex :execrows
+INSERT INTO sourcemap_indexes (branch_id, update_id, hash, status, attempts)
+SELECT b.id, $1, $2, $3, $4
 FROM branches b
-WHERE b.app_id = $3 AND b.name = $4
+WHERE b.app_id = $5 AND b.name = $6
 ON CONFLICT (branch_id, update_id) DO UPDATE
 SET hash = EXCLUDED.hash,
-    status = 'pending',
+    status = EXCLUDED.status,
+    attempts = EXCLUDED.attempts,
     reason = NULL,
     segments = NULL,
     index_size = NULL,
-    attempts = 0,
     updated_at = CURRENT_TIMESTAMP
 `
 
-type UpsertSourcemapIndexPendingParams struct {
-	UpdateID   int64       `json:"update_id"`
-	Hash       string      `json:"hash"`
-	AppID      pgtype.UUID `json:"app_id"`
-	BranchName string      `json:"branch_name"`
+type UpsertSourcemapIndexParams struct {
+	UpdateID   int64                      `json:"update_id"`
+	Hash       string                     `json:"hash"`
+	Status     types.SourcemapIndexStatus `json:"status"`
+	Attempts   int32                      `json:"attempts"`
+	AppID      pgtype.UUID                `json:"app_id"`
+	BranchName string                     `json:"branch_name"`
 }
 
-// App-scoped: the branch lookup refuses a branch of another app. Re-inserting
-// an existing row resets it, which is what a reindex wants.
-func (q *Queries) UpsertSourcemapIndexPending(ctx context.Context, arg UpsertSourcemapIndexPendingParams) (int64, error) {
-	result, err := q.db.Exec(ctx, upsertSourcemapIndexPending,
+// App-scoped: the branch lookup refuses a branch of another app. An existing
+// row is reset.
+func (q *Queries) UpsertSourcemapIndex(ctx context.Context, arg UpsertSourcemapIndexParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertSourcemapIndex,
 		arg.UpdateID,
 		arg.Hash,
+		arg.Status,
+		arg.Attempts,
 		arg.AppID,
 		arg.BranchName,
 	)

@@ -12,9 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// The attributes an error record may describe itself with: the OpenTelemetry
-// keys of the SDK's js.exception and native.exception, and the ones the
-// manual xprem_js_crash event carried before the SDK reported crashes.
+// The attributes an error record may describe itself with: the SDK's
+// OpenTelemetry exception.* keys, and the manual xprem_js_crash event's.
 const (
 	exceptionTypeKey       = "exception.type"
 	exceptionMessageKey    = "exception.message"
@@ -26,11 +25,6 @@ const (
 
 // severityError is OpenTelemetry's lowest ERROR level; FATAL sits above it.
 const severityError = 17
-
-// isErrorRecord: an error is whatever was logged at error level or above.
-func isErrorRecord(row LogRow) bool {
-	return row.IsFatal || row.SeverityNumber >= severityError
-}
 
 // exception is what an error record says of itself.
 type exception struct {
@@ -74,7 +68,7 @@ func exceptionOf(eventName, body string, attributes map[string]any) exception {
 // errorFingerprint names an error by its type and the frames it went through,
 // or by its message without frames. uuid.Nil means the record is not an error.
 func errorFingerprint(row LogRow, attributes map[string]any, traces map[string]stacktrace) uuid.UUID {
-	if !isErrorRecord(row) {
+	if !row.IsFatal && row.SeverityNumber < severityError {
 		return uuid.Nil
 	}
 	found := exceptionOf(row.EventName, row.Body, attributes)

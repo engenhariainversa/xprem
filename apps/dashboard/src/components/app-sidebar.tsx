@@ -217,7 +217,7 @@ const ExpandableSection = ({
         <Link
           to={to}
           onClick={e => {
-            if (isOpen) {
+            if (isOpen && isActive) {
               e.preventDefault();
               setIsOpen(false);
               return;

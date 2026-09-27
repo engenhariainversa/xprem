@@ -81,12 +81,13 @@ const boundedFrom = (from?: string, to?: string) => {
   if (!from) return from;
   const requested = new Date(from).getTime();
   if (Number.isNaN(requested)) return from;
-  // The ceiling counts back from the end of the window: 'to' when the caller
-  // sets one, the server's now otherwise.
+  // The ceiling counts back from 'to' when the caller sets one, exactly; from
+  // now otherwise, rounded to a day so the query key stays stable.
   const end = to ? new Date(to).getTime() : NaN;
-  const reference = Number.isNaN(end) ? Date.now() : end;
   const day = 24 * 60 * 60 * 1_000;
-  const earliest = Math.ceil((reference - MAX_HISTORY_WINDOW_MS) / day) * day;
+  const earliest = Number.isNaN(end)
+    ? Math.ceil((Date.now() - MAX_HISTORY_WINDOW_MS) / day) * day
+    : end - MAX_HISTORY_WINDOW_MS;
   return requested >= earliest ? from : new Date(earliest).toISOString();
 };
 

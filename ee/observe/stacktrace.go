@@ -6,6 +6,7 @@ package observe
 
 import (
 	"strings"
+	"unicode/utf8"
 	"xprem/ee/symbolication"
 )
 
@@ -30,16 +31,6 @@ type stacktrace struct {
 	frames []symbolication.Frame
 }
 
-// minFramesOf is how many frames a value needs to be read as a stack trace:
-// two tell a trace from any other text, and a key known to hold a trace may
-// hold a single one.
-func minFramesOf(key string) int {
-	if key == exceptionStacktraceKey || key == manualStacktraceKey {
-		return 1
-	}
-	return 2
-}
-
 // readStacktraces reads the stack traces among the attributes named, within
 // maxStacktraceBytesPerRecord together.
 func readStacktraces(attrs map[string]any, names []string) map[string]stacktrace {
@@ -50,7 +41,12 @@ func readStacktraces(attrs map[string]any, names []string) map[string]stacktrace
 		if !isText {
 			continue
 		}
-		if trace, isTrace := readStacktrace(text, minFramesOf(key)); isTrace && len(trace.text) <= budget {
+		minFrames := 2
+		if key == exceptionStacktraceKey || key == manualStacktraceKey {
+			// A key known to hold a trace may hold a single frame.
+			minFrames = 1
+		}
+		if trace, isTrace := readStacktrace(text, minFrames); isTrace && len(trace.text) <= budget {
 			budget -= len(trace.text)
 			traces[key] = trace
 		}
@@ -73,45 +69,49 @@ func readStacktrace(value string, minFrames int) (stacktrace, bool) {
 		value = value[:lastBreak]
 	}
 	lines := symbolication.ReadLines(value)
-	frames := countFrames(lines)
-	if frames < minFrames {
-		return stacktrace{}, false
-	}
-	if frames > recentFramesKept+oldestFramesKept {
-		lines = skipMiddleFrames(lines)
-	}
-	var read stacktrace
-	texts := make([]string, 0, len(lines))
-	for _, line := range lines {
-		texts = append(texts, line.Text)
-		if line.Frame != nil {
-			read.frames = append(read.frames, *line.Frame)
-		}
-	}
-	read.text = truncateRunes(strings.Join(texts, "\n"), maxStacktraceRunes)
-	return read, true
-}
-
-func countFrames(lines []symbolication.Line) int {
-	count := 0
-	for _, line := range lines {
-		if line.Frame != nil {
-			count++
-		}
-	}
-	return count
-}
-
-// skipMiddleFrames keeps the lines up to the last recent frame kept and from
-// the first oldest frame kept, and counts every frame in between, including
-// the ones an earlier "skipping" line already stood for.
-func skipMiddleFrames(lines []symbolication.Line) []symbolication.Line {
 	var frameLines []int
 	for i, line := range lines {
 		if line.Frame != nil {
 			frameLines = append(frameLines, i)
 		}
 	}
+	if len(frameLines) < minFrames {
+		return stacktrace{}, false
+	}
+	if len(frameLines) > recentFramesKept+oldestFramesKept {
+		lines = skipMiddleFrames(lines, frameLines)
+	}
+	// Kept line by line, so the frames are exactly the ones in the text; the
+	// frames come first in the budget and the message lines take what is left.
+	messageRunes := maxStacktraceRunes
+	for _, line := range lines {
+		if line.Frame != nil || line.Skipped > 0 {
+			messageRunes -= utf8.RuneCountInString(line.Text) + 1
+		}
+	}
+	var read stacktrace
+	var texts []string
+	for _, line := range lines {
+		text := line.Text
+		if line.Frame != nil {
+			read.frames = append(read.frames, *line.Frame)
+		} else if line.Skipped == 0 {
+			text = truncateRunes(text, maxAttributeValueRunes)
+			messageRunes -= utf8.RuneCountInString(text) + 1
+			if messageRunes < 0 {
+				continue
+			}
+		}
+		texts = append(texts, text)
+	}
+	read.text = strings.Join(texts, "\n")
+	return read, true
+}
+
+// skipMiddleFrames keeps the lines up to the last recent frame kept and from
+// the first oldest frame kept, and counts every frame in between, including
+// the ones an earlier "skipping" line already stood for.
+func skipMiddleFrames(lines []symbolication.Line, frameLines []int) []symbolication.Line {
 	lastRecent := frameLines[recentFramesKept-1]
 	firstOldest := frameLines[len(frameLines)-oldestFramesKept]
 	skipped := len(frameLines) - recentFramesKept - oldestFramesKept

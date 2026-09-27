@@ -106,17 +106,26 @@ func (h *ErrorsHandler) missingGroupStatus(ctx context.Context, appID, updateID 
 		return ErrorGroupUnavailable, nil
 	}
 	err := h.indexes.UpdateIndexState(ctx, appID, updateID)
-	switch {
-	case err == nil:
-		return ErrorGroupWaiting, nil
-	case errors.Is(err, symbolication.ErrIndexNotReady):
-		return ErrorGroupIndexing, nil
-	case errors.Is(err, symbolication.ErrIndexFailed):
-		return ErrorGroupIndexFailed, nil
-	case errors.Is(err, symbolication.ErrNoSourcemap), errors.Is(err, symbolication.ErrUpdateNotFound):
-		return ErrorGroupNoSourcemap, nil
-	case errors.Is(err, symbolication.ErrUnavailable):
-		return ErrorGroupUnavailable, nil
+	if status, known := errorGroupStatusOf(err); known {
+		return status, nil
 	}
 	return "", err
+}
+
+// errorGroupStatusOf is the status behind one of UpdateIndexState's answers;
+// false for any other error.
+func errorGroupStatusOf(indexErr error) (ErrorGroupStatus, bool) {
+	switch {
+	case indexErr == nil:
+		return ErrorGroupWaiting, true
+	case errors.Is(indexErr, symbolication.ErrIndexNotReady):
+		return ErrorGroupIndexing, true
+	case errors.Is(indexErr, symbolication.ErrIndexFailed):
+		return ErrorGroupIndexFailed, true
+	case errors.Is(indexErr, symbolication.ErrNoSourcemap), errors.Is(indexErr, symbolication.ErrUpdateNotFound):
+		return ErrorGroupNoSourcemap, true
+	case errors.Is(indexErr, symbolication.ErrUnavailable):
+		return ErrorGroupUnavailable, true
+	}
+	return "", false
 }

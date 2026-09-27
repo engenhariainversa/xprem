@@ -15,17 +15,15 @@ import (
 // The index is one file, in this order:
 //
 //	header    48 bytes: counts, and where the segments and texts start
-//	tables    sources, names, ignore flags, Hermes function offsets, fences,
-//	          text spans; read once
+//	tables    sources, names, ignore flags, fences, text spans; read once
 //	segments  24 bytes each, sorted by (line, column); read from one fence to
 //	          the next
 //	texts     the source files back to back; read one file at a time
 
 const (
 	indexMagic   = "XSMI"
-	indexVersion = uint32(1)
-	// headerSize leaves 8 bytes free after the 40 in use, so a field can be
-	// added without moving the tables.
+	indexVersion = uint32(2)
+	// headerSize leaves 16 bytes free after the 32 in use.
 	headerSize  = 48
 	segmentSize = 24
 	// fenceStride is how many segments lie between two fences.
@@ -35,28 +33,23 @@ const (
 // ErrInvalidIndex reports an index file the reader cannot use.
 var ErrInvalidIndex = errors.New("invalid source map index")
 
-// le writes every number on 4 bytes, smallest byte first: 2 is 02 00 00 00.
 var le = binary.LittleEndian
 
 // header is the start of the index: how much of each table there is, and
 // where the segments and the texts begin.
 type header struct {
-	SegmentCount  uint32
-	FunctionCount uint32
-	FenceCount    uint32
-	// SourcesBytes and NamesBytes are sizes in bytes, since a name can have
-	// any length; the size of every other table follows from a count.
+	SegmentCount   uint32
+	FenceCount     uint32
 	SourcesBytes   uint32
 	NamesBytes     uint32
 	SegmentsOffset uint32
-	Lines          uint32
 	TextsOffset    uint32
 }
 
 // fields lists the header values in their order in the file, after the magic
 // and the version.
 func (h *header) fields() []*uint32 {
-	return []*uint32{&h.SegmentCount, &h.FunctionCount, &h.FenceCount, &h.SourcesBytes, &h.NamesBytes, &h.SegmentsOffset, &h.Lines, &h.TextsOffset}
+	return []*uint32{&h.SegmentCount, &h.FenceCount, &h.SourcesBytes, &h.NamesBytes, &h.SegmentsOffset, &h.TextsOffset}
 }
 
 func (h header) encode() []byte {
@@ -80,8 +73,11 @@ func decodeHeader(b []byte) (header, error) {
 	for i, field := range h.fields() {
 		*field = le.Uint32(b[8+4*i:])
 	}
-	if h.SegmentsOffset < headerSize {
-		return header{}, fmt.Errorf("%w: segments offset inside the header", ErrInvalidIndex)
+	if h.SegmentsOffset < headerSize || h.SegmentsOffset > h.TextsOffset ||
+		uint64(h.TextsOffset-h.SegmentsOffset) != uint64(segmentSize)*uint64(h.SegmentCount) ||
+		uint64(h.FenceCount) != (uint64(h.SegmentCount)+fenceStride-1)/fenceStride ||
+		h.SegmentsOffset-headerSize > maxIndexCacheBytes {
+		return header{}, fmt.Errorf("%w: inconsistent header", ErrInvalidIndex)
 	}
 	return h, nil
 }
@@ -92,6 +88,15 @@ type fence struct{ line, column uint32 }
 
 // span locates one source text in the texts section.
 type span struct{ offset, length uint32 }
+
+// IndexSize is the size in bytes of the index WriteIndex writes for m.
+func IndexSize(m *Map) int {
+	size := headerSize + len(encodeTables(m, encodeStrings(m.Sources), encodeStrings(m.Names))) + segmentSize*len(m.Segments)
+	for _, content := range m.SourcesContent {
+		size += len(content)
+	}
+	return size
+}
 
 // WriteIndex writes the index of m to w.
 func WriteIndex(w io.Writer, m *Map) error {
@@ -107,12 +112,10 @@ func WriteIndex(w io.Writer, m *Map) error {
 	segmentsOffset := headerSize + len(tables)
 	h := header{
 		SegmentCount:   uint32(len(m.Segments)),
-		FunctionCount:  uint32(len(m.FunctionOffsets)),
 		FenceCount:     uint32(len(fencesOf(m.Segments))),
 		SourcesBytes:   uint32(len(sources)),
 		NamesBytes:     uint32(len(names)),
 		SegmentsOffset: uint32(segmentsOffset),
-		Lines:          uint32(m.Lines),
 		TextsOffset:    uint32(segmentsOffset + segmentSize*len(m.Segments)),
 	}
 	if _, err := w.Write(append(h.encode(), tables...)); err != nil {
@@ -134,8 +137,6 @@ func encodeTables(m *Map, sources, names []byte) []byte {
 	var buf []byte
 	buf = append(buf, sources...)
 	buf = append(buf, names...)
-	// One byte per source, in the same order: 1 when the file is not the
-	// app's own code.
 	for _, ignored := range m.Ignored {
 		if ignored {
 			buf = append(buf, 1)
@@ -143,18 +144,10 @@ func encodeTables(m *Map, sources, names []byte) []byte {
 			buf = append(buf, 0)
 		}
 	}
-	for _, offset := range m.FunctionOffsets {
-		buf = le.AppendUint32(buf, offset)
-	}
-	// Fences are the table of contents of the segments: fence i is where
-	// segment i*fenceStride starts, so a lookup knows which 1024 segments to read.
 	for _, f := range fencesOf(m.Segments) {
 		buf = le.AppendUint32(buf, f.line)
 		buf = le.AppendUint32(buf, f.column)
 	}
-	// Where each source's content sits in the texts section. The sources table
-	// above holds the file names; the contents come last, after the segments,
-	// so opening the index never reads them.
 	for _, s := range textSpans(m) {
 		buf = le.AppendUint32(buf, s.offset)
 		buf = le.AppendUint32(buf, s.length)
@@ -306,15 +299,6 @@ func (t *tableReader) flags(count int) []bool {
 	return flags
 }
 
-func (t *tableReader) uint32s(count uint32) []uint32 {
-	raw := t.take(4 * int(count))
-	values := make([]uint32, len(raw)/4)
-	for i := range values {
-		values[i] = le.Uint32(raw[4*i:])
-	}
-	return values
-}
-
 // pairs reads count pairs of uint32, the shape of both fences and spans.
 func (t *tableReader) pairs(count int) [][2]uint32 {
 	raw := t.take(8 * count)
@@ -341,14 +325,13 @@ func ReadSegmentCount(r io.Reader) (int, error) {
 
 // Index is an opened index: the tables in memory, the segments read on demand.
 type Index struct {
-	reader          io.ReaderAt
-	h               header
-	Sources         []string
-	Names           []string
-	Ignored         []bool
-	functionOffsets []uint32
-	fences          []fence
-	texts           []span
+	reader  io.ReaderAt
+	h       header
+	Sources []string
+	Names   []string
+	Ignored []bool
+	fences  []fence
+	texts   []span
 }
 
 // OpenIndex reads the header and the tables of an index. r must stay open
@@ -372,7 +355,6 @@ func OpenIndex(r io.ReaderAt) (*Index, error) {
 	x.Sources = t.strings(h.SourcesBytes)
 	x.Names = t.strings(h.NamesBytes)
 	x.Ignored = t.flags(len(x.Sources))
-	x.functionOffsets = t.uint32s(h.FunctionCount)
 	for _, p := range t.pairs(int(h.FenceCount)) {
 		x.fences = append(x.fences, fence{line: p[0], column: p[1]})
 	}
@@ -388,9 +370,6 @@ func OpenIndex(r io.ReaderAt) (*Index, error) {
 	return x, nil
 }
 
-// SegmentCount is how many segments the index holds.
-func (x *Index) SegmentCount() int { return int(x.h.SegmentCount) }
-
 // SourceText reads the text of one source; "" when the map carried none.
 func (x *Index) SourceText(source int) (string, error) {
 	if source < 0 || source >= len(x.texts) {
@@ -399,6 +378,9 @@ func (x *Index) SourceText(source int) (string, error) {
 	s := x.texts[source]
 	if s.length == 0 {
 		return "", nil
+	}
+	if s.length > maxIndexCacheBytes {
+		return "", fmt.Errorf("%w: source %d spans %d bytes", ErrInvalidIndex, source, s.length)
 	}
 	buf := make([]byte, s.length)
 	if _, err := x.reader.ReadAt(buf, int64(x.h.TextsOffset)+int64(s.offset)); err != nil {
@@ -484,14 +466,4 @@ func (x *Index) position(s Segment) Position {
 		pos.Name = x.Names[s.Name]
 	}
 	return pos
-}
-
-// LookupHermesFunction resolves a Hermes frame given as a function id and a
-// bytecode offset inside it, the minidump form; a plain virtual offset is
-// Lookup(0, offset).
-func (x *Index) LookupHermesFunction(functionID, localOffset uint32) (Position, bool, error) {
-	if int(functionID) >= len(x.functionOffsets) {
-		return Position{}, false, nil
-	}
-	return x.Lookup(0, x.functionOffsets[functionID]+localOffset)
 }

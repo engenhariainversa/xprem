@@ -3,13 +3,14 @@
 // (see ee/LICENSE at the repository root); it is NOT covered by the MIT
 // license of this repository.
 
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { api, SourcemapIndexStatus, UpdateSourcemapRecord, describeApiError } from '@/lib/api';
 import { useSelectedApp } from '@/lib/SelectedAppContext';
 import { useAppPermission } from '@/ee/lib/PermissionsContext';
 import { useToast } from '@/hooks/use-toast';
-import { formatTimestamp } from '@/lib/utils';
+import { describeReason, formatBytes, formatTimestamp } from '@/lib/utils';
 import { ApiError } from '@/components/APIError';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,18 +44,7 @@ const REASONS: Record<string, string> = {
   map_invalid: 'Source map is not a usable version 3 map',
   map_too_large: 'Source map above the size limit for indexing',
   index_too_large: 'Index above the size limit for Error tracking',
-};
-
-const describeReason = (reason: string) => {
-  const code = reason.split(':')[0].trim();
-  const label = REASONS[code];
-  return label ? { label, detail: reason === code ? undefined : reason } : { label: reason };
-};
-
-const formatBytes = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  unavailable: 'License lapsed before the index ran',
 };
 
 const isLive = (record: UpdateSourcemapRecord | undefined) =>
@@ -71,7 +61,7 @@ const IndexOutcome = ({ record }: { record: UpdateSourcemapRecord }) => {
     );
   }
   const status = STATUS[index.status];
-  const reason = index.reason ? describeReason(index.reason) : null;
+  const reason = index.reason ? describeReason(index.reason, REASONS) : null;
   const updated = formatTimestamp(index.updatedAt, true);
   return (
     <div className="space-y-1.5">
@@ -125,16 +115,24 @@ export const SourcemapIndexSection = ({
   const licenseQuery = useQuery({ queryKey: ['license'], queryFn: () => api.getLicense() });
   const licensed = licenseQuery.data?.valid === true;
   const queryKey = ['update-sourcemap', selectedAppId, branch, runtimeVersion, updateId];
+  // The record as it was when Reindex was clicked; the worker's first write changes it.
+  const [recordBeforeReindex, setRecordBeforeReindex] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey,
     enabled: !!selectedAppId && licensed,
     queryFn: () => api.getUpdateSourcemap(branch, runtimeVersion, updateId),
-    // The job finishes within seconds; poll only while it is in flight.
-    refetchInterval: query => (isLive(query.state.data) ? 3000 : false),
+    // The job finishes within seconds; poll only while it is in flight or queued.
+    refetchInterval: query => {
+      const record = query.state.data;
+      const queued =
+        recordBeforeReindex !== null && (record?.index?.updatedAt ?? '') === recordBeforeReindex;
+      return isLive(record) || queued ? 3000 : false;
+    },
   });
   const reindex = useMutation({
     mutationFn: () => api.reindexUpdateSourcemap(branch, runtimeVersion, updateId),
     onSuccess: () => {
+      setRecordBeforeReindex(data?.index?.updatedAt ?? '');
       toast({ title: 'Index scheduled', description: 'The source map is being indexed again.' });
       void queryClient.invalidateQueries({ queryKey });
     },

@@ -2,6 +2,8 @@
 // ("now", "now-7d") or an absolute local date ("2026-09-27 14:00").
 export type TimeRange = { from: string; to: string };
 
+export const defaultRange: TimeRange = { from: 'now-24h', to: 'now' };
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -36,7 +38,10 @@ export const parseTimeExpression = (expression: string, now: number): Date | nul
   const text = expression.trim();
   if (text === 'now') return new Date(now);
   const relative = /^now-(\d+)([mhdw])$/.exec(text);
-  if (relative) return new Date(now - Number(relative[1]) * unitMs[relative[2]]);
+  if (relative) {
+    const date = new Date(now - Number(relative[1]) * unitMs[relative[2]]);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
   // "2026-09-27 14:00" and "2026-09-27" read as local time, like the fields show them.
   const absolute = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(text);
   if (!absolute) return null;
@@ -49,7 +54,15 @@ export const parseTimeExpression = (expression: string, now: number): Date | nul
     Number(minutes),
     Number(seconds)
   );
-  return Number.isNaN(date.getTime()) ? null : date;
+  // A component past its range rolls the date over: February 31 is not a date.
+  const exact =
+    date.getFullYear() === Number(year) &&
+    date.getMonth() === Number(month) - 1 &&
+    date.getDate() === Number(day) &&
+    date.getHours() === Number(hours) &&
+    date.getMinutes() === Number(minutes) &&
+    date.getSeconds() === Number(seconds);
+  return exact ? date : null;
 };
 
 // Both ends as dates; null when either end does not read or they are out of order.

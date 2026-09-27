@@ -2,22 +2,20 @@
 // This file is governed by the Mercure Technologies Enterprise Edition License
 // (see ee/LICENSE); it is NOT covered by the MIT license of this repository.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { ObserveQuery } from '@/lib/api';
 import type { FilterScope } from './navigation';
-import { isRelative, resolveRange, type TimeRange } from '@/lib/timeRange';
+import { defaultRange, isRelative, resolveRange, type TimeRange } from '@/lib/timeRange';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-
-export const defaultRange: TimeRange = { from: 'now-24h', to: 'now' };
 
 // The longest window a page may ask for, as ee/observe enforces it:
 // maxLogsWindow for the event table, maxOverviewWindow everywhere else.
 export const maxWindowMs = (page: string) => (page === 'events' ? 31 * DAY : 90 * DAY);
 
-// Links made before the time range picker spelled the window ?period=7d.
+// Old ?period= links, honored as a range ending now.
 const legacyPeriods: Record<string, string> = {
   '1h': 'now-1h',
   '24h': 'now-24h',
@@ -26,9 +24,8 @@ const legacyPeriods: Record<string, string> = {
   '30d': 'now-30d',
 };
 
-// snapMs rounds a relative window start down to a stable boundary. Without it
-// every render computes a new `from` and react-query treats it as a brand new
-// query, so nothing is ever served from cache. liveMs is the refresh cadence.
+// snapMs rounds a relative window start down to a stable boundary; liveMs is
+// the refresh cadence.
 export type WindowSpec = { windowMs: number; snapMs: number; liveMs: number };
 
 const windowSpec = (windowMs: number): WindowSpec => {
@@ -322,9 +319,7 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
     const resolved = resolveRange(range, Date.now())!;
     return windowSpec(resolved.to.getTime() - resolved.from.getTime());
   }, [range]);
-  // Live only makes sense for a window that ends now. It is on by default on
-  // the short windows people watch during a rollout, and off on the long ones
-  // where polling only costs ClickHouse time.
+  // Live needs a window that ends now; on by default up to a day.
   const liveParam = searchParams.get('live');
   const live =
     range.to === 'now' && (liveParam == null ? periodSpec.windowMs <= DAY : liveParam === '1');
@@ -332,10 +327,9 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
   // The window start is computed once and reused, so on its own it would stay
   // pinned to the moment the page opened and "last hour" would quietly grow
   // into "last three hours". This advances it one snap boundary at a time
-  // while live, and freezes it at the moment of the pause.
+  // while live; setRange and setLive move it to the moment of the click.
   const [windowTick, setWindowTick] = useState(() => Date.now());
   useEffect(() => {
-    setWindowTick(Date.now());
     if (!live) return;
     const timer = window.setInterval(() => setWindowTick(Date.now()), periodSpec.snapMs);
     return () => window.clearInterval(timer);
@@ -421,6 +415,8 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
 
   const setRange = useCallback(
     (next: TimeRange) => {
+      // In the navigation's transition, so the old range never renders with the new tick.
+      startTransition(() => setWindowTick(Date.now()));
       write(params => {
         params.delete('period');
         if (next.from === defaultRange.from && next.to === defaultRange.to) {
@@ -463,6 +459,7 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
 
   const setLive = useCallback(
     (value: boolean) => {
+      startTransition(() => setWindowTick(Date.now()));
       write(params => params.set('live', value ? '1' : '0'));
     },
     [write]
@@ -478,8 +475,10 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
           : date.getTime()
       ).toISOString();
     // Snapping moves the start earlier, and a range wider than the page allows
-    // is a 400: the start never goes past the earliest the server accepts.
-    const earliest = (range.to === 'now' ? windowTick : resolved.to.getTime()) - maxWindow;
+    // is a 400: the start never goes past the earliest the server accepts,
+    // with one snap of margin for a live head measured at the server's now.
+    const earliest =
+      (range.to === 'now' ? windowTick : resolved.to.getTime()) - maxWindow + periodSpec.snapMs;
     const snappedFrom = bound(range.from, resolved.from);
     const from =
       new Date(snappedFrom).getTime() < earliest

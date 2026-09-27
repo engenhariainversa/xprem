@@ -58,9 +58,7 @@ export interface FileUploadItem {
   role: FileRole;
 }
 
-// SourcemapUploadItem is the launch asset's source map, sent beside the file
-// list: a server that stores source maps asks for its upload, an older one
-// ignores the field.
+// SourcemapUploadItem is the launch asset's source map, sent beside the file list.
 export interface SourcemapUploadItem {
   path: string;
   hash: string;
@@ -184,8 +182,7 @@ export async function computeFilesRequests(
       isSourcemap: false,
     });
     const sourcemapPath = toServerPath(bundle + '.map'); // _expo/static/js/ios/index-….hbc.map
-    const hasSourcemap = await fs.pathExists(path.join(exportRoot, sourcemapPath));
-    if (hasSourcemap) {
+    if (await fs.pathExists(path.join(exportRoot, sourcemapPath))) {
       pending.push({
         path: sourcemapPath,
         name: path.basename(sourcemapPath),
@@ -469,14 +466,7 @@ export async function requestUploadUrls({
     uploadUrl.searchParams.set('publishGroup', publishGroup);
   }
 
-  const requestBody: {
-    files: FileUploadItem[];
-    sourcemap?: SourcemapUploadItem;
-    message?: string;
-  } = { ...body };
-  if (message) {
-    requestBody.message = message;
-  }
+  const requestBody = message ? { ...body, message } : body;
 
   const response = await fetchWithRetries(uploadUrl.toString(), {
     method: 'POST',

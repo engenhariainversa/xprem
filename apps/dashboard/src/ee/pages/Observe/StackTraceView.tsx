@@ -22,8 +22,6 @@ import { tokenizeCode, type CodeToken } from './codeTokens';
 // and the component around them.
 const collapsedRows = 8;
 
-const baseName = (path: string) => path.split('/').pop() ?? path;
-
 const tokenColors: Record<CodeToken['kind'], string> = {
   comment: 'text-muted-foreground/70 italic',
   string: 'text-emerald-700 dark:text-emerald-300',
@@ -82,7 +80,7 @@ const FrameRow = ({ entry, showContext }: { entry: StackEntry; showContext: bool
   const inApp = origin?.inApp ?? false;
   const functionName = origin?.name || frame.functionName || '<anonymous>';
   const position = origin
-    ? `${baseName(origin.source)}:${origin.line}:${origin.column}`
+    ? `${shortFileName(origin.source)}:${origin.line}:${origin.column}`
     : native
       ? frame.file || 'native'
       : `${shortFileName(frame.file)}:${frame.line}:${frame.column}`;
@@ -99,9 +97,10 @@ const FrameRow = ({ entry, showContext }: { entry: StackEntry; showContext: bool
         onKeyDown={
           toggleContext &&
           (event => {
-            if ((event.key !== 'Enter' && event.key !== ' ') || event.repeat) return;
+            if (event.key !== 'Enter' && event.key !== ' ') return;
             // Space scrolls the page unless told otherwise.
             event.preventDefault();
+            if (event.repeat) return;
             toggleContext();
           })
         }

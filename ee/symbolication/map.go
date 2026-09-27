@@ -10,8 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
+	"math"
 )
 
 // ErrInvalidMap reports a file that is not a usable source map. Retrying
@@ -26,10 +25,6 @@ type Map struct {
 	Names          []string
 	Ignored        []bool
 	Segments       []Segment
-	Lines          int
-	// FunctionOffsets is Hermes' x_hermes_function_offsets for segment 0: the
-	// bytecode offset each function starts at.
-	FunctionOffsets []uint32
 }
 
 // Segment maps every generated position from (Line, Column) up to the next
@@ -49,14 +44,13 @@ type Segment struct {
 const NoIndex = ^uint32(0)
 
 type rawMap struct {
-	Version           int                 `json:"version"`
-	Sources           []string            `json:"sources"`
-	Names             []string            `json:"names"`
-	Mappings          string              `json:"mappings"`
-	SourcesContent    []*string           `json:"sourcesContent"`
-	IgnoreList        []int               `json:"ignoreList"`
-	GoogleIgnoreList  []int               `json:"x_google_ignoreList"`
-	HermesFuncOffsets map[string][]uint32 `json:"x_hermes_function_offsets"`
+	Version          int       `json:"version"`
+	Sources          []string  `json:"sources"`
+	Names            []string  `json:"names"`
+	Mappings         string    `json:"mappings"`
+	SourcesContent   []*string `json:"sourcesContent"`
+	IgnoreList       []int     `json:"ignoreList"`
+	GoogleIgnoreList []int     `json:"x_google_ignoreList"`
 }
 
 // Parse decodes a source map. Any shape the index cannot use is ErrInvalidMap.
@@ -71,7 +65,7 @@ func Parse(data []byte) (*Map, error) {
 	if raw.Mappings == "" {
 		return nil, fmt.Errorf("%w: no mappings", ErrInvalidMap)
 	}
-	segments, lines, err := decodeMappings(raw.Mappings, len(raw.Sources), len(raw.Names))
+	segments, err := decodeMappings(raw.Mappings, len(raw.Sources), len(raw.Names))
 	if err != nil {
 		return nil, err
 	}
@@ -89,21 +83,13 @@ func Parse(data []byte) (*Map, error) {
 			contents[i] = *content
 		}
 	}
-	m := &Map{
+	return &Map{
 		Sources:        raw.Sources,
 		SourcesContent: contents,
 		Names:          raw.Names,
 		Ignored:        ignored,
 		Segments:       segments,
-		Lines:          lines,
-	}
-	if offsets, ok := raw.HermesFuncOffsets["0"]; ok {
-		if !sort.SliceIsSorted(offsets, func(i, j int) bool { return offsets[i] < offsets[j] }) {
-			return nil, fmt.Errorf("%w: x_hermes_function_offsets are not sorted", ErrInvalidMap)
-		}
-		m.FunctionOffsets = offsets
-	}
-	return m, nil
+	}, nil
 }
 
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -120,30 +106,35 @@ var base64Values = func() [256]int8 {
 }()
 
 // decodeMappings turns the VLQ string into absolute segments, in generated
-// order, which is the order the string lists them in.
-func decodeMappings(mappings string, sources, names int) ([]Segment, int, error) {
+// order, which is the order the string lists them in: "," ends a segment
+// and ";" ends a generated line.
+func decodeMappings(mappings string, sources, names int) ([]Segment, error) {
 	segments := make([]Segment, 0, len(mappings)/5)
 	var totals runningTotals
-	lines := strings.Split(mappings, ";")
-	for lineIndex, line := range lines {
-		totals.column = 0
-		for _, encoded := range strings.Split(line, ",") {
-			if encoded == "" {
-				continue
-			}
+	line, start := uint32(0), 0
+	for i := 0; i <= len(mappings); i++ {
+		if i < len(mappings) && mappings[i] != ',' && mappings[i] != ';' {
+			continue
+		}
+		if encoded := mappings[start:i]; encoded != "" {
 			deltas, err := decodeVLQ(encoded)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			segment, err := totals.add(deltas, sources, names)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			segment.Line = uint32(lineIndex)
+			segment.Line = line
 			segments = append(segments, segment)
 		}
+		if i < len(mappings) && mappings[i] == ';' {
+			line++
+			totals.column = 0
+		}
+		start = i + 1
 	}
-	return segments, len(lines), nil
+	return segments, nil
 }
 
 // decodeVLQ reads the numbers of one segment, such as "SAAS" into 9, 0, 0, 9.
@@ -190,8 +181,8 @@ func (t *runningTotals) add(deltas []int64, sources, names int) (Segment, error)
 		return Segment{}, fmt.Errorf("%w: segment with %d fields", ErrInvalidMap, len(deltas))
 	}
 	t.column += deltas[0]
-	if t.column < 0 {
-		return Segment{}, fmt.Errorf("%w: negative position", ErrInvalidMap)
+	if t.column < 0 || t.column > math.MaxUint32 {
+		return Segment{}, fmt.Errorf("%w: position out of range", ErrInvalidMap)
 	}
 	segment := Segment{Column: uint32(t.column), Source: NoIndex, Name: NoIndex}
 	if len(deltas) >= 4 {
@@ -201,8 +192,8 @@ func (t *runningTotals) add(deltas []int64, sources, names int) (Segment, error)
 		if t.source < 0 || t.source >= int64(sources) {
 			return Segment{}, fmt.Errorf("%w: source index %d out of range", ErrInvalidMap, t.source)
 		}
-		if t.originalLine < 0 || t.originalColumn < 0 {
-			return Segment{}, fmt.Errorf("%w: negative position", ErrInvalidMap)
+		if t.originalLine < 0 || t.originalColumn < 0 || t.originalLine > math.MaxUint32 || t.originalColumn > math.MaxUint32 {
+			return Segment{}, fmt.Errorf("%w: position out of range", ErrInvalidMap)
 		}
 		segment.Source = uint32(t.source)
 		segment.OriginalLine = uint32(t.originalLine)
