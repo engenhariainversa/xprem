@@ -225,6 +225,10 @@ func (s *Service) record(update types.Update, write func() error) {
 // buildIndex writes the index of a map unless the store already holds one and
 // no rebuild was asked. What retrying cannot fix is a JobCancelError.
 func (s *Service) buildIndex(ctx context.Context, appId, hash string, rebuild bool) (indexOutcome, error) {
+	// Checked again here: the job may have been queued under a license that lapsed since.
+	if !s.licenseValid() {
+		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: %v", types.SourcemapIndexReasonUnavailable, ErrUnavailable))
+	}
 	if !rebuild {
 		exists, err := s.store.IndexExists(ctx, appId, hash)
 		if err != nil {

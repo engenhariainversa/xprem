@@ -224,6 +224,21 @@ func TestIndexingIsUnavailableWithoutALicense(t *testing.T) {
 	assert.ErrorIs(t, err, ErrUnavailable)
 }
 
+// A job queued under a license that lapsed since is cancelled, not run.
+func TestIndexJobIsCancelledOnceTheLicenseLapsed(t *testing.T) {
+	store := newFakeStore()
+	store.maps[testHash] = []byte(cartMap)
+	service, indexes := newTestService(store)
+	service.licenseValid = func() bool { return false }
+
+	err := runJob(t, service, indexes, 1)
+	var cancel *river.JobCancelError
+	require.ErrorAs(t, err, &cancel)
+	assert.Equal(t, types.SourcemapIndexCancelled, indexes.record.Status)
+	assert.True(t, strings.HasPrefix(indexes.record.Reason, types.SourcemapIndexReasonUnavailable), indexes.record.Reason)
+	assert.Equal(t, 0, store.puts, "nothing is written without a license")
+}
+
 // Without the job client, indexing is off: scheduling records nothing.
 func TestScheduleIndexIsANoOpWhenUnavailable(t *testing.T) {
 	service, indexes := newTestService(newFakeStore())

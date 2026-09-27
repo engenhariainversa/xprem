@@ -434,6 +434,8 @@ const (
 	SourcemapIndexReasonMapMissing  = "map_missing"
 	SourcemapIndexReasonMapInvalid  = "map_invalid"
 	SourcemapIndexReasonMapTooLarge = "map_too_large"
+	// SourcemapIndexReasonUnavailable: the license lapsed between the publish and the job.
+	SourcemapIndexReasonUnavailable = "unavailable"
 )
 
 // SourcemapIndex is the index record of one source map, as the dashboard
