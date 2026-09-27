@@ -3,7 +3,9 @@
 -- What each error of an update is, once one of its traces went through the
 -- update's source map: the fingerprint it shares with the same error in
 -- other updates, and the symbolicated trace shown for every occurrence.
--- Written by the error groups sweep (ee/observe/error_groups_job.go).
+-- Written by the error groups sweep (ee/observe/error_groups_job.go). A row
+-- whose group_fingerprint is the zero UUID marks an error the sweep could not
+-- group.
 CREATE TABLE IF NOT EXISTS error_groups (
     app_id            UUID,
     update_id         UUID,

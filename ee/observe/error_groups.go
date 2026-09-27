@@ -10,13 +10,16 @@ import (
 	"fmt"
 	"time"
 	"xprem/ee/symbolication"
+
+	"github.com/google/uuid"
 )
 
 // ErrorGroup is what an error of an update is, once one of its traces went
 // through the update's source map.
 type ErrorGroup struct {
 	Fingerprint string `json:"fingerprint"`
-	// GroupFingerprint is the same for this error in every update.
+	// GroupFingerprint is the same for this error in every update;
+	// noGroupFingerprint when it has none.
 	GroupFingerprint string              `json:"groupFingerprint"`
 	ErrorType        string              `json:"errorType"`
 	Message          string              `json:"message"`
@@ -38,7 +41,10 @@ type groupedError struct {
 	ErrorGroup
 }
 
-// ReadErrorGroup answers nil when the error has no group yet.
+// noGroupFingerprint is the group of an error the sweep could not group.
+var noGroupFingerprint = uuid.Nil.String()
+
+// ReadErrorGroup answers nil when the error has no group.
 func (e *Explorer) ReadErrorGroup(ctx context.Context, appID, updateID, fingerprint string) (*ErrorGroup, error) {
 	if e.clickhouse == nil {
 		return nil, nil
@@ -60,14 +66,17 @@ func (e *Explorer) ReadErrorGroup(ctx context.Context, appID, updateID, fingerpr
 		&group.Culprit, &trace, &group.SymbolicatedAt); err != nil {
 		return nil, err
 	}
+	if group.GroupFingerprint == noGroupFingerprint {
+		return nil, nil
+	}
 	if err := json.Unmarshal([]byte(trace), &group.Trace); err != nil {
 		return nil, fmt.Errorf("reading the trace of error %s: %w", fingerprint, err)
 	}
 	return &group, nil
 }
 
-// pendingErrorGroups lists the errors counted lately that have no group yet,
-// most frequent first.
+// pendingErrorGroups lists the errors counted lately that have neither a
+// group nor a mark, most frequent first.
 func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limit int) ([]errorKey, error) {
 	rows, err := e.clickhouse.Conn.Query(ctx, `
 		SELECT toString(app_id), toString(update_id), toString(error_fingerprint)

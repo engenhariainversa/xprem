@@ -21,17 +21,19 @@ type IndexOpener interface {
 }
 
 // The sweep's pace: how often it runs, how many errors one run takes, how far
-// back it looks for them, and how long it may take.
+// back it looks for them, how long it may take, and how many groups it writes
+// at a time.
 const (
 	errorGroupsSweepInterval = time.Minute
 	errorGroupsPerSweep      = 200
 	errorGroupsLookback      = 24 * time.Hour
 	errorGroupsSweepTimeout  = 50 * time.Second
+	errorGroupsWriteEvery    = 20
 )
 
-// ErrorGroupsSweep gives a group to every error counted without one: it
-// symbolicates one trace of each through the update's index. Whatever the
-// traffic, one run symbolicates at most errorGroupsPerSweep traces.
+// ErrorGroupsSweep gives a group to every error counted without one, from one
+// trace symbolicated through the update's index, and marks the errors it
+// cannot group.
 type ErrorGroupsSweep struct {
 	explorer *Explorer
 	indexes  IndexOpener
@@ -41,8 +43,14 @@ func NewErrorGroupsSweep(explorer *Explorer, indexes IndexOpener) *ErrorGroupsSw
 	return &ErrorGroupsSweep{explorer: explorer, indexes: indexes}
 }
 
-// Run is one pass. An error whose update has no usable index is left for a
-// later pass, when the index may exist.
+// updateIndex is what a pass knows of an update: its index, or the error
+// OpenUpdateIndex gave instead.
+type updateIndex struct {
+	index *symbolication.Index
+	err   error
+}
+
+// Run is one pass.
 func (s *ErrorGroupsSweep) Run(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, errorGroupsSweepTimeout)
 	defer cancel()
@@ -50,48 +58,53 @@ func (s *ErrorGroupsSweep) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// One index per update for the whole pass; nil when the update has none.
-	indexes := map[string]*symbolication.Index{}
+	known := map[string]updateIndex{}
 	var groups []groupedError
 	for _, key := range pending {
-		index, err := s.indexOf(ctx, indexes, key)
-		if err != nil {
-			return err
-		}
-		if index == nil {
+		update := s.indexOf(ctx, known, key)
+		var group ErrorGroup
+		switch {
+		case update.err == nil:
+			group, err = s.symbolicate(ctx, update.index, key)
+			if err != nil {
+				log.Printf("observe: error %s of update %s stays without a group: %v", key.fingerprint, key.updateID, err)
+				continue
+			}
+		case errors.Is(update.err, symbolication.ErrNoSourcemap),
+			errors.Is(update.err, symbolication.ErrUpdateNotFound),
+			errors.Is(update.err, symbolication.ErrIndexFailed):
+			group = noGroup(key)
+		case errors.Is(update.err, symbolication.ErrIndexNotReady),
+			errors.Is(update.err, symbolication.ErrUnavailable):
 			continue
-		}
-		group, err := s.symbolicate(ctx, index, key)
-		if err != nil {
-			log.Printf("observe: error %s of update %s stays without a group: %v", key.fingerprint, key.updateID, err)
-			continue
+		default:
+			return update.err
 		}
 		groups = append(groups, groupedError{errorKey: key, ErrorGroup: group})
+		if len(groups) == errorGroupsWriteEvery {
+			if err := s.explorer.writeErrorGroups(ctx, groups); err != nil {
+				return err
+			}
+			groups = nil
+		}
 	}
 	return s.explorer.writeErrorGroups(ctx, groups)
 }
 
-// indexOf opens the update's index once per pass. An update without a usable
-// index reads as nil; an error reaching the store or the database stops the
-// pass, since it would repeat for every error.
-func (s *ErrorGroupsSweep) indexOf(ctx context.Context, indexes map[string]*symbolication.Index, key errorKey) (*symbolication.Index, error) {
+// indexOf opens the update's index once per pass.
+func (s *ErrorGroupsSweep) indexOf(ctx context.Context, known map[string]updateIndex, key errorKey) updateIndex {
 	cacheKey := key.appID + "/" + key.updateID
-	if index, seen := indexes[cacheKey]; seen {
-		return index, nil
+	if update, seen := known[cacheKey]; seen {
+		return update
 	}
 	index, err := s.indexes.OpenUpdateIndex(ctx, key.appID, key.updateID)
-	switch {
-	case errors.Is(err, symbolication.ErrNoSourcemap),
-		errors.Is(err, symbolication.ErrIndexNotReady),
-		errors.Is(err, symbolication.ErrIndexFailed),
-		errors.Is(err, symbolication.ErrUpdateNotFound),
-		errors.Is(err, symbolication.ErrUnavailable):
-		index = nil
-	case err != nil:
-		return nil, err
-	}
-	indexes[cacheKey] = index
-	return index, nil
+	known[cacheKey] = updateIndex{index: index, err: err}
+	return known[cacheKey]
+}
+
+// noGroup marks an error the pass could not group.
+func noGroup(key errorKey) ErrorGroup {
+	return ErrorGroup{Fingerprint: key.fingerprint, GroupFingerprint: noGroupFingerprint, SymbolicatedAt: time.Now().UTC()}
 }
 
 func (s *ErrorGroupsSweep) symbolicate(ctx context.Context, index *symbolication.Index, key errorKey) (ErrorGroup, error) {

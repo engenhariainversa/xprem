@@ -7,6 +7,7 @@ package observe
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 	"xprem/ee/symbolication"
@@ -310,9 +311,73 @@ func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, unmapped, "an update without a map keeps its error ungrouped")
 
-	pending, err := explorer.pendingErrorGroups(ctx, now.Add(-time.Hour), 10)
-	require.NoError(t, err)
-	for _, key := range pending {
+	for _, key := range pendingKeys(t, explorer, now.Add(-time.Hour), 1000) {
 		assert.NotEqual(t, indexedUpdate, key.updateID, "a grouped error is not listed again")
+		assert.NotEqual(t, unmappedUpdate, key.updateID, "a marked error is not listed again")
+	}
+}
+
+func pendingKeys(t *testing.T, explorer *Explorer, since time.Time, limit int) []errorKey {
+	t.Helper()
+	pending, err := explorer.pendingErrorGroups(context.Background(), since, limit)
+	require.NoError(t, err)
+	return pending
+}
+
+// Needs TEST_CLICKHOUSE_URL and TEST_DATABASE_URL to run.
+func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
+	chURL, pgURL := requireLiveStores(t)
+	clickhouse.RunDBMigrations(chURL, pgURL)
+
+	ctx := context.Background()
+	engine, err := clickhouse.NewClickHouseEngine(ctx, chURL)
+	require.NoError(t, err)
+	defer engine.Close()
+	explorer := &Explorer{clickhouse: engine}
+
+	appID, indexedUpdate, unmappedUpdate := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	bundle := "/data/.expo-internal/cc6bcf26.bundle"
+	crashAt := func(offset int) map[string]any {
+		return errorAttributes("Error", "boom", fmt.Sprintf("Error: boom\n    at onPress (address at %s:1:%d)", bundle, offset))
+	}
+	logRow := func(update string, attributes map[string]any) LogRow {
+		row := LogRow{
+			Envelope: Envelope{
+				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
+				Attributes: marshalAttributes(attributes, nil), Timestamp: time.Now().UTC(), ContentKey: uuid.New(),
+			},
+			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
+		}
+		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		return row
+	}
+	var rows []LogRow
+	for offset := 0; offset < errorGroupsPerSweep; offset++ {
+		rows = append(rows, logRow(unmappedUpdate, crashAt(1000+offset)), logRow(unmappedUpdate, crashAt(1000+offset)))
+	}
+	mapped := crashAt(120)
+	rows = append(rows, logRow(indexedUpdate, mapped))
+	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, rows))
+
+	sweep := NewErrorGroupsSweep(explorer, indexOpenerFunc(func(_ context.Context, app, update string) (*symbolication.Index, error) {
+		if app != appID || update == unmappedUpdate {
+			return nil, symbolication.ErrNoSourcemap
+		}
+		return labIndex(t), nil
+	}))
+	fingerprint := errorFingerprint(LogRow{SeverityNumber: 21}, mapped).String()
+	require.NoError(t, sweep.Run(ctx))
+	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
+	require.NoError(t, err)
+	assert.Nil(t, group, "the first pass goes to the more frequent errors")
+
+	for pass := 0; pass < 20 && group == nil; pass++ {
+		require.NoError(t, sweep.Run(ctx))
+		group, err = explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
+		require.NoError(t, err)
+	}
+	require.NotNil(t, group, "the error with a map is grouped once the others are marked")
+	for _, key := range pendingKeys(t, explorer, time.Now().Add(-time.Hour), 1000) {
+		assert.NotEqual(t, unmappedUpdate, key.updateID, "a marked error is not listed again")
 	}
 }
