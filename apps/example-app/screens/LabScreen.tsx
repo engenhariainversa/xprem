@@ -117,7 +117,7 @@ export function LabScreen({
         />
         <Action
           title="Throw 300 frames deep"
-          description="Reported error whose stack is 300 descend() frames: the server keeps 64 + 16"
+          description="Reported error whose stack is 300 descend() frames: 50 recent + 50 oldest are kept"
           onPress={() => {
             try {
               descend(300)

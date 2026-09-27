@@ -122,8 +122,37 @@ func TestHealthHistoryRoundTripUsesLatestSnapshotInMinute(t *testing.T) {
 	assert.InDelta(t, 90, *points[updateID][0].HealthPercent, 0.001)
 }
 
+// countedError is one row of error_occurrences, summed over its hours.
+type countedError struct {
+	fingerprint, title            string
+	occurrences, crashes, devices uint64
+	firstSeen, lastSeen           time.Time
+}
+
+func countedErrorsOf(t *testing.T, engine *clickhouse.Engine, appID, updateID string) []countedError {
+	t.Helper()
+	rows, err := engine.Conn.Query(context.Background(), `
+		SELECT toString(error_fingerprint), any(title), sum(occurrences), sum(crashes),
+		       uniqMerge(devices), min(first_seen), max(last_seen)
+		FROM error_occurrences
+		WHERE app_id = ? AND update_id = ?
+		GROUP BY error_fingerprint
+		ORDER BY sum(occurrences) DESC`, appID, updateID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var counted []countedError
+	for rows.Next() {
+		var row countedError
+		require.NoError(t, rows.Scan(&row.fingerprint, &row.title, &row.occurrences, &row.crashes,
+			&row.devices, &row.firstSeen, &row.lastSeen))
+		counted = append(counted, row)
+	}
+	require.NoError(t, rows.Err())
+	return counted
+}
+
 // Needs TEST_CLICKHOUSE_URL and TEST_DATABASE_URL to run.
-func TestUpdateErrorsCountEachErrorOfAnUpdate(t *testing.T) {
+func TestErrorOccurrencesCountEachErrorOfAnUpdate(t *testing.T) {
 	chURL, pgURL := requireLiveStores(t)
 	clickhouse.RunDBMigrations(chURL, pgURL)
 
@@ -166,21 +195,19 @@ func TestUpdateErrorsCountEachErrorOfAnUpdate(t *testing.T) {
 		logRow(updateID, firstDevice, map[string]any{"message": "lab"}, 9, false, now),
 	}))
 
-	result, err := (&Explorer{clickhouse: engine}).ReadUpdateErrors(ctx, appID, updateID)
-	require.NoError(t, err)
-	require.True(t, result.Available)
-	require.Len(t, result.Errors, 3, "one entry per distinct error, the plain log counts for nothing")
+	counted := countedErrorsOf(t, engine, appID, updateID)
+	require.Len(t, counted, 3, "one entry per distinct error, the plain log counts for nothing")
 
-	mostFrequent := result.Errors[0]
-	assert.Equal(t, fingerprintOf(nullPointer), mostFrequent.Fingerprint)
-	assert.Equal(t, "TypeError: Cannot read property 'name' of undefined", mostFrequent.Title)
-	assert.EqualValues(t, 3, mostFrequent.Occurrences, "the other update's occurrence is not counted")
-	assert.EqualValues(t, 2, mostFrequent.Crashes)
-	assert.EqualValues(t, 2, mostFrequent.Devices)
-	assert.True(t, mostFrequent.FirstSeen.Equal(now.Add(-2*time.Hour)))
-	assert.True(t, mostFrequent.LastSeen.Equal(now))
+	mostFrequent := counted[0]
+	assert.Equal(t, fingerprintOf(nullPointer), mostFrequent.fingerprint)
+	assert.Equal(t, "TypeError: Cannot read property 'name' of undefined", mostFrequent.title)
+	assert.EqualValues(t, 3, mostFrequent.occurrences, "the other update's occurrence is not counted")
+	assert.EqualValues(t, 2, mostFrequent.crashes)
+	assert.EqualValues(t, 2, mostFrequent.devices)
+	assert.True(t, mostFrequent.firstSeen.Equal(now.Add(-2*time.Hour)))
+	assert.True(t, mostFrequent.lastSeen.Equal(now))
 
-	titles := []string{result.Errors[1].Title, result.Errors[2].Title}
+	titles := []string{counted[1].title, counted[2].title}
 	assert.ElementsMatch(t, []string{"Error: Request timed out", "RangeError: Maximum call stack size exceeded"}, titles,
 		"the manual event's name and message title it like the SDK's keys")
 

@@ -42,17 +42,18 @@ func (c *indexCache) get(hash string) (*Index, bool) {
 	return item.index, ok
 }
 
-// put opens an index over data and keeps it while it fits.
+// put opens an index over data and keeps it, evicting the least recently
+// used ones to make room. data must not exceed maxIndexCacheBytes.
 func (c *indexCache) put(hash string, data []byte) (*Index, error) {
 	index, err := OpenIndex(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxIndexCacheBytes {
-		return index, nil
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if replaced, ok := c.items[hash]; ok {
+		c.bytes -= replaced.size
+	}
 	c.items[hash] = cachedIndex{index: index, size: len(data)}
 	c.bytes += len(data)
 	c.touch(hash)

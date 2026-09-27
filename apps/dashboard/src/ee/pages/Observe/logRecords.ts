@@ -8,14 +8,6 @@ import type { Json } from './JsonView';
 // What a log record looks like once it is read rather than stored, shared by
 // the event table and the details panel it expands into.
 
-export const exactTime = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-});
-
 // A log row's date, down to the millisecond, as Datadog shows it.
 export const logTime = new Intl.DateTimeFormat(undefined, {
   month: 'short',
@@ -30,9 +22,6 @@ export const logTime = new Intl.DateTimeFormat(undefined, {
 // The first block of a UUID, enough to tell rows apart; '-' for the zero UUID.
 export const shortUUID = (value: string) =>
   !value || /^[0-]+$/.test(value) ? '-' : value.slice(0, 8);
-
-export const shortID = (value: string) =>
-  value.length > 12 ? `${value.slice(0, 8)}…` : value || '-';
 
 export const severityDot = (log: ObserveLog) => {
   if (log.isFatal) return 'bg-rose-500';
@@ -78,14 +67,6 @@ export const logMessage = (log: ObserveLog) => {
   );
 };
 
-export const prettyPayload = (value: string) => {
-  if (!value.trim()) return '';
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
-};
 // Parses a stored payload; null when it is not a JSON object or array.
 export const parseJsonDocument = (value: string): Json | null => {
   try {

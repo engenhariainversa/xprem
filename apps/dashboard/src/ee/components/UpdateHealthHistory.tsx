@@ -77,12 +77,16 @@ const RESAMPLE_TARGET_POINTS = 140;
 // whatever the server stamps as 'to'.
 const MAX_HISTORY_WINDOW_MS = 90 * 24 * 60 * 60 * 1_000;
 
-const boundedFrom = (from?: string) => {
+const boundedFrom = (from?: string, to?: string) => {
   if (!from) return from;
   const requested = new Date(from).getTime();
   if (Number.isNaN(requested)) return from;
+  // The ceiling counts back from the end of the window: 'to' when the caller
+  // sets one, the server's now otherwise.
+  const end = to ? new Date(to).getTime() : NaN;
+  const reference = Number.isNaN(end) ? Date.now() : end;
   const day = 24 * 60 * 60 * 1_000;
-  const earliest = Math.ceil((Date.now() - MAX_HISTORY_WINDOW_MS) / day) * day;
+  const earliest = Math.ceil((reference - MAX_HISTORY_WINDOW_MS) / day) * day;
   return requested >= earliest ? from : new Date(earliest).toISOString();
 };
 
@@ -251,7 +255,7 @@ export const UpdateHealthHistory = ({
     () => Array.from(new Set(series.flatMap(item => item.updateUUIDs))),
     [series]
   );
-  const windowFrom = boundedFrom(from);
+  const windowFrom = boundedFrom(from, to);
   const query = useQuery({
     queryKey: ['update-health-history', selectedAppId, updateUUIDs.join(','), windowFrom, to],
     queryFn: () => api.getUpdateHealthHistory(updateUUIDs, windowFrom, to),

@@ -27,8 +27,6 @@ import { AUDIT_ACTION_GROUPS } from '@/ee/lib/auditCatalog';
 
 const PAGE_SIZE = 50;
 
-// Local-datetime input value -> RFC3339 the API expects. Empty stays empty.
-
 const selectClassName =
   'h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm ' +
   'focus:outline-none focus:ring-1 focus:ring-ring';

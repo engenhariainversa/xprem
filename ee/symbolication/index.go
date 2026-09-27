@@ -249,8 +249,8 @@ func decodeStrings(b []byte) ([]string, error) {
 	if len(b) < 8 {
 		return nil, fmt.Errorf("%w: truncated string table", ErrInvalidIndex)
 	}
-	count := int(le.Uint32(b))    // Read the first 4 bytes of b (words count)
-	offsetsEnd := 4 + 4*count + 4 // 4 first bytes = words count, then 4 bytes per words position and 4 bytes for the end
+	count := int(le.Uint32(b))
+	offsetsEnd := 4 + 4*count + 4
 	if count < 0 || len(b) < offsetsEnd {
 		return nil, fmt.Errorf("%w: truncated string table", ErrInvalidIndex)
 	}

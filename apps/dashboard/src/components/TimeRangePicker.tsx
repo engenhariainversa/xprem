@@ -20,6 +20,7 @@ import {
   readRecentRanges,
   rememberRange,
   rangeLengthMs,
+  sameDay,
   shiftRange,
   TimeRange,
   zoomOutRange,
@@ -27,11 +28,6 @@ import {
 
 const weekdays = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const monthTitle = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
-
-const sameDay = (a: Date, b: Date) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth() === b.getMonth() &&
-  a.getDate() === b.getDate();
 
 const MonthCalendar = ({
   selected,

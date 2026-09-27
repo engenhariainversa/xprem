@@ -66,9 +66,11 @@ func (s *fakeStore) PutIndex(_ context.Context, _, hash string, body io.Reader) 
 	return nil
 }
 
-// fakeIndexes records the last status written for the update.
+// fakeIndexes records the last status written for the update; finishErr makes
+// every Finish fail.
 type fakeIndexes struct {
-	record *types.SourcemapIndex
+	record    *types.SourcemapIndex
+	finishErr error
 }
 
 func (r *fakeIndexes) MarkPending(_ context.Context, _ types.Update, hash string) error {
@@ -83,6 +85,9 @@ func (r *fakeIndexes) MarkRunning(context.Context, types.Update) error {
 }
 
 func (r *fakeIndexes) Finish(_ context.Context, _ types.Update, status types.SourcemapIndexStatus, reason string, segments *int, indexSize *int64) error {
+	if r.finishErr != nil {
+		return r.finishErr
+	}
 	r.record.Status, r.record.Reason, r.record.Segments, r.record.IndexSize = status, reason, segments, indexSize
 	return nil
 }
@@ -212,6 +217,30 @@ func TestIndexJobRetriesTransientErrors(t *testing.T) {
 	require.Error(t, runJob(t, service, indexes, 5))
 	assert.Equal(t, types.SourcemapIndexFailed, indexes.record.Status)
 	assert.Contains(t, indexes.record.Reason, "connection reset")
+}
+
+// An index whose stored record cannot be written is not usable yet: the job
+// fails so River retries, and the retry records the index without rebuilding it.
+func TestIndexJobFailsUntilTheStoredRecordIsWritten(t *testing.T) {
+	store := newFakeStore()
+	store.maps[testHash] = []byte(cartMap)
+	service, indexes := newTestService(store)
+	indexes.finishErr = errors.New("connection reset")
+
+	err := runJob(t, service, indexes, 1)
+	require.ErrorContains(t, err, "connection reset")
+	assert.Equal(t, 1, store.puts, "the index itself was stored")
+	assert.Equal(t, types.SourcemapIndexRunning, indexes.record.Status)
+	_, err = service.storedIndexHash(context.Background(), "app-1", "update-uuid")
+	assert.ErrorIs(t, err, ErrIndexNotReady)
+
+	indexes.finishErr = nil
+	require.NoError(t, runJob(t, service, indexes, 2))
+	assert.Equal(t, types.SourcemapIndexStored, indexes.record.Status)
+	assert.Equal(t, 1, store.puts, "the retry reuses the stored index")
+	hash, err := service.storedIndexHash(context.Background(), "app-1", "update-uuid")
+	require.NoError(t, err)
+	assert.Equal(t, testHash, hash)
 }
 
 func TestIndexingIsUnavailableWithoutALicense(t *testing.T) {

@@ -88,11 +88,23 @@ const FrameRow = ({ entry, showContext }: { entry: StackEntry; showContext: bool
       : `${shortFileName(frame.file)}:${frame.line}:${frame.column}`;
   const bundlePosition = native ? '' : `${frame.file}:${frame.line}:${frame.column}`;
   const muted = native || (origin !== undefined && !inApp);
+  const toggleContext = origin?.context ? () => setContextOpen(!contextOpen) : undefined;
   return (
     <li className={cn(muted && 'text-muted-foreground')}>
       <div
-        role={origin?.context ? 'button' : undefined}
-        onClick={origin?.context ? () => setContextOpen(!contextOpen) : undefined}
+        role={toggleContext && 'button'}
+        tabIndex={toggleContext && 0}
+        aria-expanded={toggleContext && contextOpen}
+        onClick={toggleContext}
+        onKeyDown={
+          toggleContext &&
+          (event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            // Space scrolls the page unless told otherwise.
+            event.preventDefault();
+            toggleContext();
+          })
+        }
         className={cn(
           'flex items-baseline gap-3 px-3 py-1',
           origin?.context && 'cursor-pointer hover:bg-accent/50'

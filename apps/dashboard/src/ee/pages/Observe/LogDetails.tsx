@@ -16,13 +16,12 @@ const Detail = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-// The attributes known to hold a trace: their title, and whether it is the
-// exception's own trace, the one its group symbolicates. "stack" is what the
-// manual xprem_js_crash event carried. Any other attribute keeps its key.
+// The attributes known to hold the exception's own trace, the one its group
+// symbolicates: the SDK's key, and the one the manual xprem_js_crash event
+// carried. Any other attribute keeps its key as title.
 const traceAttributes: Record<string, { title: string; exception: boolean }> = {
   'exception.stacktrace': { title: 'Stack trace', exception: true },
   stack: { title: 'Stack trace', exception: true },
-  'expo.error.component_stack': { title: 'Component stack', exception: false },
 };
 
 // Splits the attributes into the stack traces they hold and everything else,

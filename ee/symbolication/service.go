@@ -190,10 +190,12 @@ func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) er
 
 	outcome, err := s.buildIndex(ctx, args.AppId, args.Hash, args.Rebuild)
 	if err == nil {
+		// The stored record is what makes the index usable, so its failure fails
+		// the job and River retries; the retry finds the index already stored.
 		segments := outcome.segments
-		s.record(update, func() error {
-			return s.indexes.Finish(ctx, update, types.SourcemapIndexStored, "", &segments, outcome.indexSize)
-		})
+		if err := s.indexes.Finish(ctx, update, types.SourcemapIndexStored, "", &segments, outcome.indexSize); err != nil {
+			return fmt.Errorf("recording the index of update %s: %w", update.UpdateId, err)
+		}
 		return nil
 	}
 	var cancel *river.JobCancelError
@@ -214,8 +216,8 @@ func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) er
 	return err
 }
 
-// record runs a bookkeeping write and logs its failure: the index itself is
-// what matters, the record must never fail the job.
+// record runs a bookkeeping write and logs its failure, so the build's own
+// outcome is what the job reports.
 func (s *Service) record(update types.Update, write func() error) {
 	if err := write(); err != nil {
 		log.Printf("[sourcemap] cannot record the index of update %s: %v", update.UpdateId, err)
@@ -308,6 +310,9 @@ func (s *Service) OpenUpdateIndex(ctx context.Context, appId, updateUUID string)
 	data, err := io.ReadAll(io.LimitReader(file.Reader, maxIndexCacheBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading the index of map %s: %w", hash, err)
+	}
+	if len(data) > maxIndexCacheBytes {
+		return nil, fmt.Errorf("%w: the index of map %s exceeds %d MB", ErrIndexFailed, hash, maxIndexCacheBytes>>20)
 	}
 	return s.cache.put(hash, data)
 }

@@ -67,7 +67,7 @@ const timeLabel = new Intl.DateTimeFormat(undefined, {
   hour12: false,
 });
 
-const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+export const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
 
 // A quick range by its name; otherwise the shortest spelling of the bounds,
 // with the day written once when both ends share it.

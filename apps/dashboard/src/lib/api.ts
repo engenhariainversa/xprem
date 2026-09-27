@@ -667,7 +667,7 @@ export type ErrorGroup = {
   message: string;
   // "LabScreen.tsx in onPress": the first frame of the app's own code.
   culprit: string;
-  trace: { message: string; frames: TraceFrame[] | null };
+  trace: { frames: TraceFrame[] | null };
   symbolicatedAt: string;
 };
 
