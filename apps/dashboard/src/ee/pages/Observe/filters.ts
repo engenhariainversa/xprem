@@ -332,11 +332,11 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
   // The window start is computed once and reused, so on its own it would stay
   // pinned to the moment the page opened and "last hour" would quietly grow
   // into "last three hours". This advances it one snap boundary at a time
-  // while live, and freezes it when paused, which is what paused should mean.
+  // while live, and freezes it at the moment of the pause.
   const [windowTick, setWindowTick] = useState(() => Date.now());
   useEffect(() => {
-    if (!live) return;
     setWindowTick(Date.now());
+    if (!live) return;
     const timer = window.setInterval(() => setWindowTick(Date.now()), periodSpec.snapMs);
     return () => window.clearInterval(timer);
   }, [live, periodSpec.snapMs]);

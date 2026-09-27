@@ -76,8 +76,8 @@ func (e *Explorer) ReadErrorGroup(ctx context.Context, appID, updateID, fingerpr
 }
 
 // pendingErrorGroups lists the errors counted lately that have neither a
-// group nor a mark, most frequent first.
-func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limit int) ([]errorKey, error) {
+// group nor a mark, most frequent first, from the offset-th one.
+func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limit, offset int) ([]errorKey, error) {
 	rows, err := e.clickhouse.Conn.Query(ctx, `
 		SELECT toString(app_id), toString(update_id), toString(error_fingerprint)
 		FROM error_occurrences
@@ -87,8 +87,8 @@ func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limi
 		      WHERE (app_id, update_id) IN (
 		          SELECT app_id, update_id FROM error_occurrences WHERE hour >= ?))
 		GROUP BY app_id, update_id, error_fingerprint
-		ORDER BY sum(occurrences) DESC
-		LIMIT ?`, since, since, limit)
+		ORDER BY sum(occurrences) DESC, error_fingerprint
+		LIMIT ? OFFSET ?`, since, since, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("listing the errors without a group: %w", err)
 	}

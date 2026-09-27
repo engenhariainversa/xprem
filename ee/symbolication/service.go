@@ -158,8 +158,12 @@ func (s *Service) scheduleIndex(ctx context.Context, update types.Update, hash s
 	if !s.available() {
 		return nil
 	}
-	if err := s.indexes.MarkPending(ctx, update, hash); err != nil {
-		return err
+	// A rebuild resets the record only once River took the job, so a refused
+	// one leaves the record as it was.
+	if !rebuild {
+		if err := s.indexes.MarkPending(ctx, update, hash); err != nil {
+			return err
+		}
 	}
 	_, err := s.jobs.Enqueue(ctx, indexArgs{
 		AppId:          update.AppId,
@@ -178,6 +182,9 @@ func (s *Service) scheduleIndex(ctx context.Context, update types.Update, hash s
 	}
 	if err != nil {
 		return fmt.Errorf("enqueue sourcemap index of update %s: %w", update.UpdateId, err)
+	}
+	if rebuild {
+		return s.indexes.MarkPending(ctx, update, hash)
 	}
 	return nil
 }

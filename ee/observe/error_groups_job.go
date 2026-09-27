@@ -50,47 +50,62 @@ type updateIndex struct {
 	err   error
 }
 
-// Run is one pass.
+// Run is one pass. It reads the pending errors page by page: the ones written
+// leave the list, the ones skipped stay at its head, so the next page starts
+// past them.
 func (s *ErrorGroupsSweep) Run(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, errorGroupsSweepTimeout)
 	defer cancel()
-	pending, err := s.explorer.pendingErrorGroups(ctx, time.Now().Add(-errorGroupsLookback), errorGroupsPerSweep)
-	if err != nil {
-		return err
-	}
+	since := time.Now().Add(-errorGroupsLookback)
 	known := map[string]updateIndex{}
-	var groups []groupedError
-	for _, key := range pending {
-		update := s.indexOf(ctx, known, key)
-		var group ErrorGroup
-		switch {
-		case update.err == nil:
-			group, err = s.symbolicate(ctx, update.index, key)
-			if err != nil {
-				log.Printf("observe: error %s of update %s stays without a group: %v", key.fingerprint, key.updateID, err)
+	symbolicated, skipped := 0, 0
+	for symbolicated < errorGroupsPerSweep {
+		pending, err := s.explorer.pendingErrorGroups(ctx, since, errorGroupsPerSweep, skipped)
+		if err != nil {
+			return err
+		}
+		var groups []groupedError
+		for _, key := range pending {
+			if symbolicated == errorGroupsPerSweep {
+				break
+			}
+			update := s.indexOf(ctx, known, key)
+			var group ErrorGroup
+			switch {
+			case update.err == nil:
+				group, err = s.symbolicate(ctx, update.index, key)
+				if err != nil {
+					log.Printf("observe: error %s of update %s stays without a group: %v", key.fingerprint, key.updateID, err)
+					skipped++
+					continue
+				}
+				symbolicated++
+			case errors.Is(update.err, symbolication.ErrNoSourcemap),
+				errors.Is(update.err, symbolication.ErrUpdateNotFound):
+				group = noGroup(key)
+			case errors.Is(update.err, symbolication.ErrUnavailable):
+				// Nothing can be grouped without a license.
+				return s.explorer.writeErrorGroups(ctx, groups)
+			default:
+				skipped++
 				continue
 			}
-		case errors.Is(update.err, symbolication.ErrNoSourcemap),
-			errors.Is(update.err, symbolication.ErrUpdateNotFound):
-			group = noGroup(key)
-		case errors.Is(update.err, symbolication.ErrIndexNotReady),
-			errors.Is(update.err, symbolication.ErrIndexFailed),
-			errors.Is(update.err, symbolication.ErrUnavailable):
-			// A failed index can be reindexed.
-			continue
-		default:
-			log.Printf("observe: the index of update %s cannot be opened: %v", key.updateID, update.err)
-			continue
-		}
-		groups = append(groups, groupedError{errorKey: key, ErrorGroup: group})
-		if len(groups) == errorGroupsWriteEvery {
-			if err := s.explorer.writeErrorGroups(ctx, groups); err != nil {
-				return err
+			groups = append(groups, groupedError{errorKey: key, ErrorGroup: group})
+			if len(groups) == errorGroupsWriteEvery {
+				if err := s.explorer.writeErrorGroups(ctx, groups); err != nil {
+					return err
+				}
+				groups = nil
 			}
-			groups = nil
+		}
+		if err := s.explorer.writeErrorGroups(ctx, groups); err != nil {
+			return err
+		}
+		if len(pending) < errorGroupsPerSweep {
+			return nil
 		}
 	}
-	return s.explorer.writeErrorGroups(ctx, groups)
+	return nil
 }
 
 // indexOf opens the update's index once per pass.
@@ -100,8 +115,28 @@ func (s *ErrorGroupsSweep) indexOf(ctx context.Context, known map[string]updateI
 		return update
 	}
 	index, err := s.indexes.OpenUpdateIndex(ctx, key.appID, key.updateID)
+	if err != nil && !isIndexState(err) {
+		log.Printf("observe: the index of update %s cannot be opened: %v", key.updateID, err)
+	}
 	known[cacheKey] = updateIndex{index: index, err: err}
 	return known[cacheKey]
+}
+
+// isIndexState reports whether err is one of OpenUpdateIndex's answers about
+// the update itself.
+func isIndexState(err error) bool {
+	for _, state := range []error{
+		symbolication.ErrNoSourcemap,
+		symbolication.ErrIndexNotReady,
+		symbolication.ErrIndexFailed,
+		symbolication.ErrUpdateNotFound,
+		symbolication.ErrUnavailable,
+	} {
+		if errors.Is(err, state) {
+			return true
+		}
+	}
+	return false
 }
 
 // noGroup marks an error whose update has no source map.

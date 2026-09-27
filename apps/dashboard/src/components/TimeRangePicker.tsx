@@ -181,7 +181,7 @@ export const TimeRangePicker = ({
     if (next) {
       setDraft(value ?? { from: 'now-24h', to: 'now' });
       setSearch('');
-      setRecent(readRecentRanges());
+      setRecent(readRecentRanges().filter(range => rangeLengthMs(range, Date.now()) <= maxRangeMs));
     }
     setOpen(next);
   };

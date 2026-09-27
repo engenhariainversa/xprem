@@ -319,13 +319,13 @@ func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
 
 func pendingKeys(t *testing.T, explorer *Explorer, since time.Time, limit int) []errorKey {
 	t.Helper()
-	pending, err := explorer.pendingErrorGroups(context.Background(), since, limit)
+	pending, err := explorer.pendingErrorGroups(context.Background(), since, limit, 0)
 	require.NoError(t, err)
 	return pending
 }
 
 // Needs TEST_CLICKHOUSE_URL and TEST_DATABASE_URL to run.
-func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
+func TestErrorGroupsSweepIsNotStarvedByErrorsItCannotGroup(t *testing.T) {
 	chURL, pgURL := requireLiveStores(t)
 	clickhouse.RunDBMigrations(chURL, pgURL)
 
@@ -335,7 +335,7 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
 	defer engine.Close()
 	explorer := &Explorer{clickhouse: engine}
 
-	appID, indexedUpdate, unmappedUpdate := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	appID, indexedUpdate, unmappedUpdate, brokenUpdate := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	bundle := "/data/.expo-internal/cc6bcf26.bundle"
 	crashAt := func(offset int) map[string]any {
 		return errorAttributes("Error", "boom", fmt.Sprintf("Error: boom\n    at onPress (address at %s:1:%d)", bundle, offset))
@@ -353,33 +353,34 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
 	}
 	var rows []LogRow
 	for offset := 0; offset < errorGroupsPerSweep; offset++ {
-		rows = append(rows, logRow(unmappedUpdate, crashAt(1000+offset)), logRow(unmappedUpdate, crashAt(1000+offset)))
+		rows = append(rows,
+			logRow(unmappedUpdate, crashAt(1000+offset)), logRow(unmappedUpdate, crashAt(1000+offset)),
+			logRow(brokenUpdate, crashAt(1000+offset)), logRow(brokenUpdate, crashAt(1000+offset)))
 	}
 	mapped := crashAt(120)
 	rows = append(rows, logRow(indexedUpdate, mapped))
 	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, rows))
 
 	sweep := NewErrorGroupsSweep(explorer, indexOpenerFunc(func(_ context.Context, app, update string) (*symbolication.Index, error) {
-		if app != appID || update == unmappedUpdate {
+		switch {
+		case app != appID || update == unmappedUpdate:
 			return nil, symbolication.ErrNoSourcemap
+		case update == brokenUpdate:
+			return nil, symbolication.ErrIndexFailed
 		}
 		return labIndex(t), nil
 	}))
-	fingerprint := fingerprintFor(LogRow{SeverityNumber: 21}, mapped).String()
 	require.NoError(t, sweep.Run(ctx))
-	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
-	require.NoError(t, err)
-	assert.Nil(t, group, "the first pass goes to the more frequent errors")
 
-	for pass := 0; pass < 20 && group == nil; pass++ {
-		require.NoError(t, sweep.Run(ctx))
-		group, err = explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
-		require.NoError(t, err)
+	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprintFor(LogRow{SeverityNumber: 21}, mapped).String())
+	require.NoError(t, err)
+	require.NotNil(t, group, "the error with a map is grouped in the same pass as the more frequent ones it cannot group")
+	listed := map[string]bool{}
+	for _, key := range pendingKeys(t, explorer, time.Now().Add(-time.Hour), 100000) {
+		listed[key.updateID] = true
 	}
-	require.NotNil(t, group, "the error with a map is grouped once the others are marked")
-	for _, key := range pendingKeys(t, explorer, time.Now().Add(-time.Hour), 1000) {
-		assert.NotEqual(t, unmappedUpdate, key.updateID, "a marked error is not listed again")
-	}
+	assert.False(t, listed[unmappedUpdate], "an error without a map is marked and not listed again")
+	assert.True(t, listed[brokenUpdate], "an error with a failed index waits for a reindex")
 }
 
 func attributesJSON(attributes map[string]any) string {
