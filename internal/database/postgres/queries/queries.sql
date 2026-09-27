@@ -407,7 +407,7 @@ WHERE u.id = $1 AND b.app_id = $2 AND b.name = $3;
 
 -- name: GetUpdateSourcemapByUUID :one
 -- The map hash and index status of the update a device reports by UUID.
-SELECT u.sourcemap_hash, COALESCE(si.status, '')::text AS index_status
+SELECT u.sourcemap_hash, COALESCE(si.status, '') AS index_status
 FROM updates u
 JOIN branches b ON b.id = u.branch_id
 LEFT JOIN sourcemap_indexes si ON si.branch_id = u.branch_id AND si.update_id = u.id
@@ -2630,7 +2630,7 @@ WHERE b.id = si.branch_id
 -- The update's map and, when a job handled it, its index record: one row
 -- per update, index columns NULL until then.
 SELECT u.sourcemap_hash,
-       COALESCE(si.status, '')::text AS index_status, si.reason AS index_reason, si.segments AS index_segments,
+       COALESCE(si.status, '') AS index_status, si.reason AS index_reason, si.segments AS index_segments,
        si.index_size, si.attempts AS index_attempts, si.updated_at AS index_updated_at
 FROM updates u
 JOIN branches b ON b.id = u.branch_id

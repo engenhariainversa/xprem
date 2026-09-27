@@ -134,7 +134,7 @@ func (r *PostgresIndexRepository) GetUpdateSourcemap(ctx context.Context, appId,
 	}
 	index := &types.SourcemapIndex{
 		Hash:      *row.SourcemapHash,
-		Status:    types.SourcemapIndexStatus(row.IndexStatus),
+		Status:    row.IndexStatus,
 		IndexSize: row.IndexSize,
 		UpdatedAt: row.IndexUpdatedAt.Time.UTC().Format(time.RFC3339),
 	}
@@ -165,7 +165,7 @@ func (r *PostgresIndexRepository) GetUpdateSourcemapByUUID(ctx context.Context, 
 	}
 	sourcemap := &UpdateSourcemap{Hash: row.SourcemapHash}
 	if row.IndexStatus != "" && row.SourcemapHash != nil {
-		sourcemap.Index = &types.SourcemapIndex{Hash: *row.SourcemapHash, Status: types.SourcemapIndexStatus(row.IndexStatus)}
+		sourcemap.Index = &types.SourcemapIndex{Hash: *row.SourcemapHash, Status: row.IndexStatus}
 	}
 	return sourcemap, nil
 }

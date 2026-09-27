@@ -2585,7 +2585,7 @@ func (q *Queries) GetUpdateOriginByUUID(ctx context.Context, arg GetUpdateOrigin
 
 const getUpdateSourcemap = `-- name: GetUpdateSourcemap :one
 SELECT u.sourcemap_hash,
-       COALESCE(si.status, '')::text AS index_status, si.reason AS index_reason, si.segments AS index_segments,
+       COALESCE(si.status, '') AS index_status, si.reason AS index_reason, si.segments AS index_segments,
        si.index_size, si.attempts AS index_attempts, si.updated_at AS index_updated_at
 FROM updates u
 JOIN branches b ON b.id = u.branch_id
@@ -2605,13 +2605,13 @@ type GetUpdateSourcemapParams struct {
 }
 
 type GetUpdateSourcemapRow struct {
-	SourcemapHash  *string            `json:"sourcemap_hash"`
-	IndexStatus    string             `json:"index_status"`
-	IndexReason    *string            `json:"index_reason"`
-	IndexSegments  *int32             `json:"index_segments"`
-	IndexSize      *int64             `json:"index_size"`
-	IndexAttempts  *int32             `json:"index_attempts"`
-	IndexUpdatedAt pgtype.Timestamptz `json:"index_updated_at"`
+	SourcemapHash  *string                    `json:"sourcemap_hash"`
+	IndexStatus    types.SourcemapIndexStatus `json:"index_status"`
+	IndexReason    *string                    `json:"index_reason"`
+	IndexSegments  *int32                     `json:"index_segments"`
+	IndexSize      *int64                     `json:"index_size"`
+	IndexAttempts  *int32                     `json:"index_attempts"`
+	IndexUpdatedAt pgtype.Timestamptz         `json:"index_updated_at"`
 }
 
 // The update's map and, when a job handled it, its index record: one row
@@ -2637,7 +2637,7 @@ func (q *Queries) GetUpdateSourcemap(ctx context.Context, arg GetUpdateSourcemap
 }
 
 const getUpdateSourcemapByUUID = `-- name: GetUpdateSourcemapByUUID :one
-SELECT u.sourcemap_hash, COALESCE(si.status, '')::text AS index_status
+SELECT u.sourcemap_hash, COALESCE(si.status, '') AS index_status
 FROM updates u
 JOIN branches b ON b.id = u.branch_id
 LEFT JOIN sourcemap_indexes si ON si.branch_id = u.branch_id AND si.update_id = u.id
@@ -2651,8 +2651,8 @@ type GetUpdateSourcemapByUUIDParams struct {
 }
 
 type GetUpdateSourcemapByUUIDRow struct {
-	SourcemapHash *string `json:"sourcemap_hash"`
-	IndexStatus   string  `json:"index_status"`
+	SourcemapHash *string                    `json:"sourcemap_hash"`
+	IndexStatus   types.SourcemapIndexStatus `json:"index_status"`
 }
 
 // The map hash and index status of the update a device reports by UUID.

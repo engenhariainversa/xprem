@@ -5,6 +5,7 @@
 package symbolication
 
 import (
+	"math"
 	"path"
 	"strings"
 
@@ -57,6 +58,8 @@ const (
 	contextLines        = 5
 	maxContextLineRunes = 150
 	trimmedLineRunes    = 140
+	// maxContextSourceBytes is the largest source file read for context.
+	maxContextSourceBytes = 4 << 20
 )
 
 // Symbolicate reads a stack trace and maps every frame it can through the
@@ -148,6 +151,9 @@ func sameFrame(a, b TraceFrame) bool {
 // originOf looks one frame up in the index. A bytecode frame is looked up by
 // its offset, a source frame by its line and column made zero-based.
 func originOf(index *Index, frame Frame, sources *sourceLines) *Origin {
+	if frame.Line > math.MaxUint32 || frame.Column > math.MaxUint32 {
+		return nil
+	}
 	var pos Position
 	var ok bool
 	var err error
@@ -177,7 +183,7 @@ func (s *sourceLines) around(source, line, column int) *Context {
 	lines, seen := s.lines[source]
 	if !seen {
 		text, err := s.index.SourceText(source)
-		if err == nil && text != "" {
+		if err == nil && text != "" && len(text) <= maxContextSourceBytes {
 			// A file ends with a line break; that is not one more line.
 			lines = strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 		}

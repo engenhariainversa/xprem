@@ -156,6 +156,9 @@ func decodeVLQ(encoded string) ([]int64, error) {
 			}
 			continue
 		}
+		if len(numbers) == 5 {
+			return nil, fmt.Errorf("%w: segment with more than 5 fields", ErrInvalidMap)
+		}
 		// The lowest bit is the sign.
 		if value&1 != 0 {
 			numbers = append(numbers, -(value >> 1))

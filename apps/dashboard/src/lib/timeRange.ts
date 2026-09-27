@@ -113,12 +113,18 @@ export const rangeLengthMs = (range: TimeRange, now: number) => {
 
 // Doubles the window around its middle, never past maxMs; a window ending now
 // keeps ending now.
+// A duration as a relative expression, in the largest unit that divides it.
+const relativeExpression = (ms: number) => {
+  const unit = ['w', 'd', 'h', 'm'].find(u => ms % unitMs[u] === 0) ?? 'm';
+  return `now-${Math.round(ms / unitMs[unit])}${unit}`;
+};
+
 export const zoomOutRange = (range: TimeRange, now: number, maxMs = Infinity): TimeRange | null => {
   const resolved = resolveRange(range, now);
   if (!resolved) return null;
   const length = Math.min(resolved.to.getTime() - resolved.from.getTime(), maxMs / 2);
   if (range.to === 'now') {
-    return { from: formatAbsolute(new Date(now - 2 * length)), to: 'now' };
+    return { from: relativeExpression(2 * length), to: 'now' };
   }
   const to = Math.min(resolved.to.getTime() + length / 2, now);
   return { from: formatAbsolute(new Date(to - 2 * length)), to: formatAbsolute(new Date(to)) };
