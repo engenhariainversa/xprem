@@ -434,6 +434,8 @@ const (
 	SourcemapIndexReasonMapMissing  = "map_missing"
 	SourcemapIndexReasonMapInvalid  = "map_invalid"
 	SourcemapIndexReasonMapTooLarge = "map_too_large"
+	// SourcemapIndexReasonIndexTooLarge: the index would not fit the symbolication cache.
+	SourcemapIndexReasonIndexTooLarge = "index_too_large"
 	// SourcemapIndexReasonUnavailable: the license lapsed between the publish and the job.
 	SourcemapIndexReasonUnavailable = "unavailable"
 )

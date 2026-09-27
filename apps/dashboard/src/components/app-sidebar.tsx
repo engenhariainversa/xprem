@@ -93,7 +93,13 @@ const PendingUsersBadge = ({ count }: { count: number }) => (
 // and people go straight to the one they need. They are sub-entries here
 // rather than tabs inside the page so the destination is visible before you
 // arrive, and so the page keeps its full height for the data.
-const ObserveNav = ({ onNavigate }: { onNavigate?: () => void }) => {
+const ObserveNav = ({
+  onNavigate,
+  showEnterpriseBadges,
+}: {
+  onNavigate?: () => void;
+  showEnterpriseBadges: boolean;
+}) => {
   const { pathname, search } = useLocation();
   const navigationId = useId();
   const isActive = pathname === '/observe' || pathname.startsWith('/observe/');
@@ -161,6 +167,7 @@ const ObserveNav = ({ onNavigate }: { onNavigate?: () => void }) => {
                 )}>
                 <page.icon className="h-3.5 w-3.5" strokeWidth={1.75} />
                 <span>{page.label}</span>
+                {page.enterprise && showEnterpriseBadges && <EnterpriseNavBadge />}
               </Link>
             );
           })}
@@ -337,7 +344,12 @@ export function AppSidebar({
                     Updates
                   </NavLink>
                 )}
-                {CONTROL_PLANE_ENABLED && <ObserveNav onNavigate={onNavigate} />}
+                {CONTROL_PLANE_ENABLED && (
+                  <ObserveNav
+                    onNavigate={onNavigate}
+                    showEnterpriseBadges={showEnterpriseNavBadges}
+                  />
+                )}
                 <NavLink to="/channels" icon={Box} onNavigate={onNavigate}>
                   Channels
                 </NavLink>

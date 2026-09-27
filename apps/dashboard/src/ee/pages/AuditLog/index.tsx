@@ -23,6 +23,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { EnterpriseFeatureGate } from '@/ee/components/EnterpriseFeatureGate';
+import { auditLogFeature } from '@/ee/lib/enterpriseFeatures';
 import { AUDIT_ACTION_GROUPS } from '@/ee/lib/auditCatalog';
 
 const PAGE_SIZE = 50;
@@ -180,7 +181,7 @@ export const AuditLog = () => {
         title="Audit log"
         description="Every state-changing action on this server: who did it, on what, and with which outcome. Entries are append-only."
       />
-      <EnterpriseFeatureGate>
+      <EnterpriseFeatureGate feature={auditLogFeature}>
         <div className="space-y-4">
           {!!eventsQuery.error && <ApiError error={eventsQuery.error} />}
 

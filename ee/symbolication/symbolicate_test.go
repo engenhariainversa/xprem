@@ -91,6 +91,21 @@ func TestSymbolicateMapsFramesToTheirSource(t *testing.T) {
 	assert.Nil(t, trace.Frames[4].Origin, "an offset before the first segment maps nowhere")
 }
 
+func TestSymbolicateLeavesHermesInternalFramesAlone(t *testing.T) {
+	index := openIndexOf(t, labMap(labScreen, 6))
+	trace := Symbolicate(index, strings.Join([]string{
+		"Error: boom",
+		"    at anonymous (address at InternalBytecode.js:1:120)",
+		"    at onPress (address at " + bundle + ":1:120)",
+	}, "\n"))
+
+	require.Len(t, trace.Frames, 2)
+	assert.True(t, trace.Frames[0].Native)
+	assert.Nil(t, trace.Frames[0].Origin, "the engine's own bytecode is not in the app's map")
+	require.NotNil(t, trace.Frames[1].Origin)
+	assert.Equal(t, "LabScreen.tsx in onPress", Culprit(trace))
+}
+
 func TestSymbolicateWithoutAnIndexKeepsTheFrames(t *testing.T) {
 	trace := Symbolicate(nil, hermesTrace())
 	require.Len(t, trace.Frames, 5)

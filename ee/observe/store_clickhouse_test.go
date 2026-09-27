@@ -173,17 +173,17 @@ func TestErrorOccurrencesCountEachErrorOfAnUpdate(t *testing.T) {
 		row := LogRow{
 			Envelope: Envelope{
 				AppID: appID, EASClientID: device, UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: marshalAttributes(attributes, nil), Timestamp: at, ContentKey: uuid.New(),
+				Attributes: attributesJSON(attributes), Timestamp: at, ContentKey: uuid.New(),
 			},
 			EventName:      "js.exception",
 			SeverityNumber: severity,
 			IsFatal:        fatal,
 		}
-		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		row.ErrorFingerprint = fingerprintFor(row, attributes)
 		return row
 	}
 	fingerprintOf := func(attributes map[string]any) string {
-		return errorFingerprint(LogRow{SeverityNumber: severityError}, attributes).String()
+		return fingerprintFor(LogRow{SeverityNumber: severityError}, attributes).String()
 	}
 	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, []LogRow{
 		logRow(updateID, firstDevice, nullPointer, 21, true, now.Add(-2*time.Hour)),
@@ -270,11 +270,11 @@ func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
 		row := LogRow{
 			Envelope: Envelope{
 				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: marshalAttributes(attributes, nil), Timestamp: now, ContentKey: uuid.New(),
+				Attributes: attributesJSON(attributes), Timestamp: now, ContentKey: uuid.New(),
 			},
 			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
 		}
-		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		row.ErrorFingerprint = fingerprintFor(row, attributes)
 		return row
 	}
 	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, []LogRow{
@@ -296,7 +296,7 @@ func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
 	require.NoError(t, sweep.Run(ctx))
 	assert.Equal(t, 2, opened, "one open per update")
 
-	fingerprint := errorFingerprint(LogRow{SeverityNumber: 21, IsFatal: true}, crash).String()
+	fingerprint := fingerprintFor(LogRow{SeverityNumber: 21, IsFatal: true}, crash).String()
 	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
 	require.NoError(t, err)
 	require.NotNil(t, group)
@@ -344,11 +344,11 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
 		row := LogRow{
 			Envelope: Envelope{
 				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
-				Attributes: marshalAttributes(attributes, nil), Timestamp: time.Now().UTC(), ContentKey: uuid.New(),
+				Attributes: attributesJSON(attributes), Timestamp: time.Now().UTC(), ContentKey: uuid.New(),
 			},
 			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
 		}
-		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		row.ErrorFingerprint = fingerprintFor(row, attributes)
 		return row
 	}
 	var rows []LogRow
@@ -365,7 +365,7 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
 		}
 		return labIndex(t), nil
 	}))
-	fingerprint := errorFingerprint(LogRow{SeverityNumber: 21}, mapped).String()
+	fingerprint := fingerprintFor(LogRow{SeverityNumber: 21}, mapped).String()
 	require.NoError(t, sweep.Run(ctx))
 	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
 	require.NoError(t, err)
@@ -380,4 +380,9 @@ func TestErrorGroupsSweepIsNotStarvedByErrorsWithoutAMap(t *testing.T) {
 	for _, key := range pendingKeys(t, explorer, time.Now().Add(-time.Hour), 1000) {
 		assert.NotEqual(t, unmappedUpdate, key.updateID, "a marked error is not listed again")
 	}
+}
+
+func attributesJSON(attributes map[string]any) string {
+	out, _ := marshalAttributes(attributes, nil)
+	return out
 }

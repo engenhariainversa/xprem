@@ -32,8 +32,8 @@ const (
 )
 
 // ErrorGroupsSweep gives a group to every error counted without one, from one
-// trace symbolicated through the update's index, and marks the errors it
-// cannot group.
+// trace symbolicated through the update's index, and marks the errors of an
+// update that has no source map.
 type ErrorGroupsSweep struct {
 	explorer *Explorer
 	indexes  IndexOpener
@@ -71,14 +71,16 @@ func (s *ErrorGroupsSweep) Run(ctx context.Context) error {
 				continue
 			}
 		case errors.Is(update.err, symbolication.ErrNoSourcemap),
-			errors.Is(update.err, symbolication.ErrUpdateNotFound),
-			errors.Is(update.err, symbolication.ErrIndexFailed):
+			errors.Is(update.err, symbolication.ErrUpdateNotFound):
 			group = noGroup(key)
 		case errors.Is(update.err, symbolication.ErrIndexNotReady),
+			errors.Is(update.err, symbolication.ErrIndexFailed),
 			errors.Is(update.err, symbolication.ErrUnavailable):
+			// A failed index can be reindexed.
 			continue
 		default:
-			return update.err
+			log.Printf("observe: the index of update %s cannot be opened: %v", key.updateID, update.err)
+			continue
 		}
 		groups = append(groups, groupedError{errorKey: key, ErrorGroup: group})
 		if len(groups) == errorGroupsWriteEvery {
@@ -102,7 +104,7 @@ func (s *ErrorGroupsSweep) indexOf(ctx context.Context, known map[string]updateI
 	return known[cacheKey]
 }
 
-// noGroup marks an error the pass could not group.
+// noGroup marks an error whose update has no source map.
 func noGroup(key errorKey) ErrorGroup {
 	return ErrorGroup{Fingerprint: key.fingerprint, GroupFingerprint: noGroupFingerprint, SymbolicatedAt: time.Now().UTC()}
 }

@@ -32,7 +32,7 @@ export type HealthHistorySeries = {
 };
 
 type AggregatedPoint = Omit<UpdateHealthHistoryPoint, 'role'>;
-type Metric = 'health' | 'adoption' | 'faults';
+type Metric = 'health' | 'adoption' | 'crashes';
 
 type MetricOption = {
   key: Metric;
@@ -55,9 +55,9 @@ const metricOptions: MetricOption[] = [
     icon: Users,
   },
   {
-    key: 'faults',
-    label: 'Faults',
-    description: 'Unique faulty devices, by root cause',
+    key: 'crashes',
+    label: 'Crashes',
+    description: 'Unique crashed devices, by root cause',
     icon: AlertTriangle,
   },
 ];
@@ -163,7 +163,7 @@ const toTimeSeries = (
     }),
   }));
 
-const faultSeries = (
+const crashSeries = (
   series: Array<HealthHistorySeries & { points: AggregatedPoint[] }>
 ): TimeSeriesDefinition[] => {
   const byTimestamp = new Map<number, { native: number; js: number }>();
@@ -282,7 +282,7 @@ export const UpdateHealthHistory = ({
     () => toTimeSeries(aggregated, point => point.devicesOnUpdate),
     [aggregated]
   );
-  const faults = useMemo(() => faultSeries(aggregated), [aggregated]);
+  const crashes = useMemo(() => crashSeries(aggregated), [aggregated]);
   // The counts behind each curve, taken from its newest bucket: the same three
   // figures the device dimensions get, so a split by update group reads like a
   // split by OS version. A group with no bucket in the window has no curve
@@ -318,7 +318,7 @@ export const UpdateHealthHistory = ({
     .pop();
   const selectedOption = metricOptions.find(option => option.key === metric) ?? metricOptions[0];
   const chartSeries =
-    metric === 'health' ? healthSeries : metric === 'adoption' ? adoptionSeries : faults;
+    metric === 'health' ? healthSeries : metric === 'adoption' ? adoptionSeries : crashes;
   const visibleChartSeries = chartSeries.filter(item => item.points.length > 0);
   const formatValue =
     metric === 'health'

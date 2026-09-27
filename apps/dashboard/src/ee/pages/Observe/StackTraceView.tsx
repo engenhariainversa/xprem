@@ -4,12 +4,12 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Loader2, Sparkles } from 'lucide-react';
+import { ArrowUpRight, Bug, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { api, type ErrorGroupStatus, type TraceOrigin } from '@/lib/api';
 import { useSettings } from '@/lib/SettingsContext';
 import { cn } from '@/lib/utils';
 import { EnterpriseExplainerDialog } from '@/ee/components/EnterpriseExplainerDialog';
-import { sourcemapFeature } from '@/ee/lib/sourcemapFeature';
+import { errorTrackingFeature } from '@/ee/lib/enterpriseFeatures';
 import {
   entriesOfSymbolicated,
   shortFileName,
@@ -137,31 +137,42 @@ const statusLabels: Partial<Record<ErrorGroupStatus, string>> = {
   no_sourcemap: 'No source map for this update',
 };
 
+// One line above an exception's trace, for a deployment without a license.
+const ErrorTrackingBanner = () => {
+  const [explainerOpen, setExplainerOpen] = useState(false);
+  const licenseQuery = useQuery({ queryKey: ['license'], queryFn: () => api.getLicense() });
+  if (!licenseQuery.data || licenseQuery.data.valid) return null;
+  return (
+    <>
+      <div className="flex items-center gap-2 border-b border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-1.5 font-sans text-[11px] text-emerald-800 dark:text-emerald-200">
+        <Bug className="h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-300" />
+        <span className="font-medium">Error tracking</span>
+        <span className="truncate text-emerald-800/80 dark:text-emerald-200/80">
+          Source-mapped stack traces and error grouping across updates.
+        </span>
+        <button
+          type="button"
+          onClick={() => setExplainerOpen(true)}
+          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 font-medium hover:bg-emerald-400/10">
+          Discover Enterprise
+          <ArrowUpRight className="h-3 w-3" />
+        </button>
+      </div>
+      <EnterpriseExplainerDialog
+        open={explainerOpen}
+        onOpenChange={setExplainerOpen}
+        feature={errorTrackingFeature}
+      />
+    </>
+  );
+};
+
 // The right side of the header: what stands between this trace and the
 // app's own code, or where its processing is.
 const SourceStatus = ({ status }: { status?: ErrorGroupStatus }) => {
   const { UPLOAD_SOURCEMAPS } = useSettings();
-  const [explainerOpen, setExplainerOpen] = useState(false);
   const licenseQuery = useQuery({ queryKey: ['license'], queryFn: () => api.getLicense() });
 
-  if (licenseQuery.data && !licenseQuery.data.valid) {
-    return (
-      <>
-        <button
-          type="button"
-          onClick={() => setExplainerOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-sans text-[11px] text-emerald-700 hover:bg-emerald-400/10 dark:text-emerald-300">
-          <Sparkles className="h-3 w-3" />
-          See the original source with Symbolication
-        </button>
-        <EnterpriseExplainerDialog
-          open={explainerOpen}
-          onOpenChange={setExplainerOpen}
-          feature={sourcemapFeature}
-        />
-      </>
-    );
-  }
   if (licenseQuery.data?.valid && !UPLOAD_SOURCEMAPS) {
     return (
       <span className="font-sans text-[11px] text-muted-foreground">
@@ -222,6 +233,7 @@ export const StackTraceView = ({
 
   return (
     <section className="overflow-hidden rounded-lg border bg-card font-mono text-[11px]">
+      {errorGroup && <ErrorTrackingBanner />}
       <header className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
         <button
           type="button"

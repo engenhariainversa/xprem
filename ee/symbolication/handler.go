@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"xprem/internal/handlers"
+	"xprem/internal/jobs"
 	"xprem/internal/validation"
 
 	"github.com/gorilla/mux"
@@ -54,6 +55,8 @@ func renderError(w http.ResponseWriter, err error, fallbackDetail string) {
 		handlers.RenderError(w, http.StatusNotFound, "This update was published without a source map.")
 	case errors.Is(err, ErrUpdateNotFound):
 		handlers.RenderError(w, http.StatusNotFound, "Update not found.")
+	case errors.Is(err, jobs.ErrAlreadyRunning):
+		handlers.RenderError(w, http.StatusConflict, "An index job for this update is already running.")
 	case errors.As(err, &valErr):
 		handlers.RenderError(w, http.StatusBadRequest, valErr.Error())
 	default:

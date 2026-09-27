@@ -87,28 +87,57 @@ func Symbolicate(index *Index, stacktrace string) Trace {
 	return trace
 }
 
+// Line is one line of a stack trace as read: a frame, a count of frames the
+// trace left out, or text.
+type Line struct {
+	Text string
+	// Frame is nil unless the line is a frame.
+	Frame   *Frame
+	Skipped int
+}
+
+// ReadLines reads a stack trace line by line.
+func ReadLines(stacktrace string) []Line {
+	texts := strings.Split(stacktrace, "\n")
+	lines := make([]Line, len(texts))
+	for i, text := range texts {
+		lines[i].Text = text
+		if frame, isFrame := ParseFrame(text); isFrame {
+			lines[i].Frame = &frame
+		} else if count, isSkipped := SkippedFrames(text); isSkipped {
+			lines[i].Skipped = count
+		}
+	}
+	return lines
+}
+
 // ReadTrace reads the frames of a trace, folding a recursion into one frame.
 // Lines that are not frames, the message first, are left out.
 func ReadTrace(stacktrace string) Trace {
 	var trace Trace
-	for _, line := range strings.Split(stacktrace, "\n") {
-		if frame, isFrame := ParseFrame(line); isFrame {
+	for _, line := range ReadLines(stacktrace) {
+		switch {
+		case line.Frame != nil:
+			frame := *line.Frame
 			entry := TraceFrame{
 				Function: frame.Function, File: frame.File, Line: frame.Line, Column: frame.Column,
-				Native: frame.Kind == NativeFrame, Bytecode: frame.Kind == BytecodeFrame, Repeat: 1,
+				Native: frame.Kind == NativeFrame || isEngineFrame(frame), Bytecode: frame.Kind == BytecodeFrame, Repeat: 1,
 			}
 			if last := len(trace.Frames) - 1; last >= 0 && sameFrame(trace.Frames[last], entry) {
 				trace.Frames[last].Repeat++
 				continue
 			}
 			trace.Frames = append(trace.Frames, entry)
-			continue
-		}
-		if count, isSkipped := SkippedFrames(line); isSkipped {
-			trace.Frames = append(trace.Frames, TraceFrame{Skipped: count})
+		case line.Skipped > 0:
+			trace.Frames = append(trace.Frames, TraceFrame{Skipped: line.Skipped})
 		}
 	}
 	return trace
+}
+
+// isEngineFrame reports a frame of Hermes' own bytecode.
+func isEngineFrame(frame Frame) bool {
+	return frame.Kind == BytecodeFrame && path.Base(frame.File) == "InternalBytecode.js"
 }
 
 func sameFrame(a, b TraceFrame) bool {

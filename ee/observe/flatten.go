@@ -243,7 +243,7 @@ func FlattenMetrics(appID string, batch MetricBatch, now time.Time) []MetricRow 
 				}
 			}
 			envelope.SessionID = normalizeSessionID(str(sessionIDKey))
-			envelope.Attributes = marshalAttributes(point.Attributes, metricEnvelopeKeys)
+			envelope.Attributes, _ = marshalAttributes(point.Attributes, metricEnvelopeKeys)
 			envelope.Timestamp = clampTimestamp(point.TimeUnixNano, now)
 			row := MetricRow{
 				Envelope:        envelope,
@@ -287,7 +287,8 @@ func FlattenLogs(appID string, batch LogBatch, now time.Time) []LogRow {
 			}
 			envelope := resourceEnvelope
 			envelope.SessionID = normalizeSessionID(str(sessionIDKey))
-			envelope.Attributes = marshalAttributes(record.Attributes, logEnvelopeKeys)
+			attributes, traces := marshalAttributes(record.Attributes, logEnvelopeKeys)
+			envelope.Attributes = attributes
 			envelope.Timestamp = clampTimestamp(record.TimeUnixNano, now)
 			row := LogRow{
 				Envelope:       envelope,
@@ -297,7 +298,7 @@ func FlattenLogs(appID string, batch LogBatch, now time.Time) []LogRow {
 				IsFatal:        isFatal,
 				Body:           boundBody(record.Body),
 			}
-			row.ErrorFingerprint = errorFingerprint(row, record.Attributes)
+			row.ErrorFingerprint = errorFingerprint(row, record.Attributes, traces)
 			hashParts := []string{
 				row.EASClientID, row.SessionID, row.UpdateID, row.EventName,
 				strconv.FormatUint(record.TimeUnixNano, 10),
@@ -328,10 +329,11 @@ var (
 	}
 )
 
-// marshalAttributes serializes the non-envelope attributes as JSON.
+// marshalAttributes serializes the non-envelope attributes as JSON, and
+// returns the stack traces it found among them, by key.
 // encoding/json sorts map keys, so the output (and therefore the content
 // hash) is deterministic across retries of the same batch.
-func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
+func marshalAttributes(attrs map[string]any, envelope map[string]bool) (string, map[string]stacktrace) {
 	names := make([]string, 0, len(attrs))
 	for key, value := range attrs {
 		if envelope[key] || value == nil {
@@ -340,7 +342,7 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
 		names = append(names, key)
 	}
 	if len(names) == 0 {
-		return ""
+		return "", nil
 	}
 	// Alphabetical, matching the order the client retains, so both ends keep the same attributes past the ceiling.
 	sort.Strings(names)
@@ -349,16 +351,17 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
 	}
 
 	kept := make(map[string]any, len(names))
+	traces := readStacktraces(attrs, names)
+	for key, trace := range traces {
+		kept[key] = trace.text
+	}
 	budget := maxAttributesBytes
-	stacktraceBudget := maxStacktraceBytesPerRecord
 	for _, key := range names {
+		if _, isTrace := traces[key]; isTrace {
+			continue
+		}
 		value := attrs[key]
 		if text, isText := value.(string); isText {
-			if trace, isTrace := trimStacktrace(text); isTrace && len(trace) <= stacktraceBudget {
-				stacktraceBudget -= len(trace)
-				kept[key] = trace
-				continue
-			}
 			value = truncateRunes(text, maxAttributeValueRunes)
 		}
 		cost := len(key) + 8
@@ -380,13 +383,13 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
 		kept[key] = value
 	}
 	if len(kept) == 0 {
-		return ""
+		return "", nil
 	}
 	out, err := json.Marshal(kept)
 	if err != nil {
-		return ""
+		return "", nil
 	}
-	return string(out)
+	return string(out), traces
 }
 
 // contentKey fingerprints a record's client-authored fields, so a batch the SDK re-sends collapses at read time

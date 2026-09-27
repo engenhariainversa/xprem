@@ -8,8 +8,6 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { api, SourcemapIndexStatus, UpdateSourcemapRecord, describeApiError } from '@/lib/api';
 import { useSelectedApp } from '@/lib/SelectedAppContext';
 import { useAppPermission } from '@/ee/lib/PermissionsContext';
-import { EnterpriseFeatureGate } from '@/ee/components/EnterpriseFeatureGate';
-import { sourcemapFeature } from '@/ee/lib/sourcemapFeature';
 import { useToast } from '@/hooks/use-toast';
 import { formatTimestamp } from '@/lib/utils';
 import { ApiError } from '@/components/APIError';
@@ -44,6 +42,7 @@ const REASONS: Record<string, string> = {
   map_missing: 'Source map missing from the store',
   map_invalid: 'Source map is not a usable version 3 map',
   map_too_large: 'Source map above the size limit for indexing',
+  index_too_large: 'Index above the size limit for Error tracking',
 };
 
 const describeReason = (reason: string) => {
@@ -106,6 +105,8 @@ const IndexOutcome = ({ record }: { record: UpdateSourcemapRecord }) => {
   );
 };
 
+// The source map of an update and the state of its index. Renders nothing
+// without an Enterprise license.
 export const SourcemapIndexSection = ({
   branch,
   runtimeVersion,
@@ -121,10 +122,12 @@ export const SourcemapIndexSection = ({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const canReindex = useAppPermission('update:publish', 'admin-only');
+  const licenseQuery = useQuery({ queryKey: ['license'], queryFn: () => api.getLicense() });
+  const licensed = licenseQuery.data?.valid === true;
   const queryKey = ['update-sourcemap', selectedAppId, branch, runtimeVersion, updateId];
   const { data, isLoading, error } = useQuery({
     queryKey,
-    enabled: !!selectedAppId,
+    enabled: !!selectedAppId && licensed,
     queryFn: () => api.getUpdateSourcemap(branch, runtimeVersion, updateId),
     // The job finishes within seconds; poll only while it is in flight.
     refetchInterval: query => (isLive(query.state.data) ? 3000 : false),
@@ -140,6 +143,10 @@ export const SourcemapIndexSection = ({
       toast({ title: message.title, description: message.description, variant: 'destructive' });
     },
   });
+
+  if (!licensed) {
+    return null;
+  }
 
   const reindexButton = (
     <Button
@@ -158,47 +165,45 @@ export const SourcemapIndexSection = ({
   );
 
   return (
-    <EnterpriseFeatureGate feature={sourcemapFeature}>
-      <section className="space-y-3">
-        <div className="flex items-start justify-between gap-4">
-          <h2 className="text-base font-semibold">Source map</h2>
-          {canReindex ? (
-            reindexButton
-          ) : (
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                {/* A disabled button emits no pointer events, so the wrapper carries the tooltip. */}
-                <TooltipTrigger asChild>
-                  <span tabIndex={0} className="inline-flex">
-                    {reindexButton}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="text-xs font-normal">
-                  Only an admin can reindex a source map.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-
-        {error ? (
-          <ApiError error={error} />
-        ) : isLoading || !data ? (
-          <Skeleton className="h-24 w-full rounded-xl" />
+    <section className="space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="text-base font-semibold">Source map</h2>
+        {canReindex ? (
+          reindexButton
         ) : (
-          <div className="flex items-start justify-between gap-4 rounded-xl border bg-card px-4 py-3 shadow-sm">
-            <div className="min-w-0 space-y-0.5">
-              <p className="text-xs text-muted-foreground">Map</p>
-              <code className="break-all font-mono text-xs" title={sourcemapHash}>
-                {sourcemapHash}
-              </code>
-            </div>
-            <div className="w-64 shrink-0">
-              <IndexOutcome record={data} />
-            </div>
-          </div>
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              {/* A disabled button emits no pointer events, so the wrapper carries the tooltip. */}
+              <TooltipTrigger asChild>
+                <span tabIndex={0} className="inline-flex">
+                  {reindexButton}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="text-xs font-normal">
+                Only an admin can reindex a source map.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
-      </section>
-    </EnterpriseFeatureGate>
+      </div>
+
+      {error ? (
+        <ApiError error={error} />
+      ) : isLoading || !data ? (
+        <Skeleton className="h-24 w-full rounded-xl" />
+      ) : (
+        <div className="flex items-start justify-between gap-4 rounded-xl border bg-card px-4 py-3 shadow-sm">
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-xs text-muted-foreground">Map</p>
+            <code className="break-all font-mono text-xs" title={sourcemapHash}>
+              {sourcemapHash}
+            </code>
+          </div>
+          <div className="w-64 shrink-0">
+            <IndexOutcome record={data} />
+          </div>
+        </div>
+      )}
+    </section>
   );
 };

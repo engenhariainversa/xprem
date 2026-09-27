@@ -5,6 +5,7 @@
 package observe
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -39,66 +40,82 @@ func errorAttributes(errorType, message, stacktrace string) map[string]any {
 }
 
 func TestTheSameBugHasOneFingerprintOnEveryDevice(t *testing.T) {
-	onIPhone := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
-	onPixel := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("9F21B04C", 3, "1128613")))
+	onIPhone := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
+	onPixel := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("9F21B04C", 3, "1128613")))
 	assert.NotEqual(t, uuid.Nil, onIPhone)
 	assert.Equal(t, onIPhone, onPixel)
 }
 
 func TestARecursionHasOneFingerprintWhateverItsDepth(t *testing.T) {
-	shallow := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
-	deep := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 300, "1128613")))
+	shallow := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
+	deep := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 300, "1128613")))
 	assert.Equal(t, shallow, deep)
 }
 
+func TestTheOtherAttributesDoNotChangeTheFingerprint(t *testing.T) {
+	trace := deviceTrace("0CC7E3AE", 3, "1128613")
+	alone := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", trace))
+	crowded := errorAttributes("Error", "boom", trace)
+	for i := 0; i < 20; i++ {
+		crowded[fmt.Sprintf("a%02d", i)] = strings.Repeat("x", 1000)
+	}
+	assert.Equal(t, alone, fingerprintFor(exceptionRow, crowded), "attributes past the byte budget do not hide the trace")
+}
+
 func TestTwoThrowSitesAreTwoErrors(t *testing.T) {
-	here := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
-	there := errorFingerprint(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128700")))
+	here := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128613")))
+	there := fingerprintFor(exceptionRow, errorAttributes("Error", "boom", deviceTrace("0CC7E3AE", 3, "1128700")))
 	assert.NotEqual(t, here, there)
 }
 
 func TestTheFramesDecideAndNotTheMessage(t *testing.T) {
 	trace := deviceTrace("0CC7E3AE", 3, "1128613")
 	assert.Equal(t,
-		errorFingerprint(exceptionRow, errorAttributes("TypeError", "Cannot read property 'name' of undefined", trace)),
-		errorFingerprint(exceptionRow, errorAttributes("TypeError", "Cannot read property 'email' of undefined", trace)))
+		fingerprintFor(exceptionRow, errorAttributes("TypeError", "Cannot read property 'name' of undefined", trace)),
+		fingerprintFor(exceptionRow, errorAttributes("TypeError", "Cannot read property 'email' of undefined", trace)))
 	assert.NotEqual(t,
-		errorFingerprint(exceptionRow, errorAttributes("TypeError", "boom", trace)),
-		errorFingerprint(exceptionRow, errorAttributes("RangeError", "boom", trace)))
+		fingerprintFor(exceptionRow, errorAttributes("TypeError", "boom", trace)),
+		fingerprintFor(exceptionRow, errorAttributes("RangeError", "boom", trace)))
 }
 
 func TestWithoutFramesTheMessageDecidesWithoutItsValues(t *testing.T) {
 	assert.Equal(t,
-		errorFingerprint(exceptionRow, errorAttributes("Error", "User 42 not found at https://api.example.com/users/42", "")),
-		errorFingerprint(exceptionRow, errorAttributes("Error", "User 7 not found at https://api.example.com/users/7", "")))
+		fingerprintFor(exceptionRow, errorAttributes("Error", "User 42 not found at https://api.example.com/users/42", "")),
+		fingerprintFor(exceptionRow, errorAttributes("Error", "User 7 not found at https://api.example.com/users/7", "")))
 	assert.NotEqual(t,
-		errorFingerprint(exceptionRow, errorAttributes("Error", "User 42 not found", "")),
-		errorFingerprint(exceptionRow, errorAttributes("Error", "Cart 42 is empty", "")))
+		fingerprintFor(exceptionRow, errorAttributes("Error", "User 42 not found", "")),
+		fingerprintFor(exceptionRow, errorAttributes("Error", "Cart 42 is empty", "")))
 }
 
 // The level decides: what is logged at error or fatal is an error, whatever
 // it carries; what is logged below is not, whatever it carries.
 func TestTheLevelDecidesWhatIsAnError(t *testing.T) {
 	info := LogRow{EventName: "lab_button_pressed", SeverityNumber: 9}
-	assert.Equal(t, uuid.Nil, errorFingerprint(info, map[string]any{"message": "hello"}))
-	assert.Equal(t, uuid.Nil, errorFingerprint(info, errorAttributes("Error", "boom", "")))
+	assert.Equal(t, uuid.Nil, fingerprintFor(info, map[string]any{"message": "hello"}))
+	assert.Equal(t, uuid.Nil, fingerprintFor(info, errorAttributes("Error", "boom", "")))
 
 	failed := LogRow{EventName: "payment_failed", SeverityNumber: severityError, Body: "Card declined"}
-	assert.NotEqual(t, uuid.Nil, errorFingerprint(failed, map[string]any{"source": "checkout"}))
+	assert.NotEqual(t, uuid.Nil, fingerprintFor(failed, map[string]any{"source": "checkout"}))
 	assert.Equal(t,
-		errorFingerprint(failed, nil),
-		errorFingerprint(LogRow{EventName: "payment_failed", SeverityNumber: 20, Body: "Card declined"}, nil),
+		fingerprintFor(failed, nil),
+		fingerprintFor(LogRow{EventName: "payment_failed", SeverityNumber: 20, Body: "Card declined"}, nil),
 		"the error levels are one level")
 
 	fatal := LogRow{EventName: "app_died", IsFatal: true}
-	assert.NotEqual(t, uuid.Nil, errorFingerprint(fatal, nil), "an event without any message is named after itself")
+	assert.NotEqual(t, uuid.Nil, fingerprintFor(fatal, nil), "an event without any message is named after itself")
 }
 
 // The manual xprem_js_crash event spells the same things as name, message and stack.
 func TestAManualCrashEventHasTheSameFingerprintAsTheSDKs(t *testing.T) {
 	trace := deviceTrace("0CC7E3AE", 3, "1128613")
 	manualRow := LogRow{EventName: JSCrashEventName, SeverityNumber: 21, IsFatal: true}
-	manual := errorFingerprint(manualRow, map[string]any{"name": "Error", "message": "boom", "stack": trace})
+	manual := fingerprintFor(manualRow, map[string]any{"name": "Error", "message": "boom", "stack": trace})
 	assert.NotEqual(t, uuid.Nil, manual)
-	assert.Equal(t, errorFingerprint(exceptionRow, errorAttributes("Error", "boom", trace)), manual)
+	assert.Equal(t, fingerprintFor(exceptionRow, errorAttributes("Error", "boom", trace)), manual)
+}
+
+// fingerprintFor is errorFingerprint from the attributes as marshalAttributes reads them.
+func fingerprintFor(row LogRow, attributes map[string]any) uuid.UUID {
+	_, traces := marshalAttributes(attributes, nil)
+	return errorFingerprint(row, attributes, traces)
 }

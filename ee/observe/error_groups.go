@@ -41,7 +41,7 @@ type groupedError struct {
 	ErrorGroup
 }
 
-// noGroupFingerprint is the group of an error the sweep could not group.
+// noGroupFingerprint is the group of an error whose update has no source map.
 var noGroupFingerprint = uuid.Nil.String()
 
 // ReadErrorGroup answers nil when the error has no group.
@@ -83,10 +83,12 @@ func (e *Explorer) pendingErrorGroups(ctx context.Context, since time.Time, limi
 		FROM error_occurrences
 		WHERE hour >= ?
 		  AND (app_id, update_id, error_fingerprint) NOT IN (
-		      SELECT app_id, update_id, error_fingerprint FROM error_groups)
+		      SELECT app_id, update_id, error_fingerprint FROM error_groups
+		      WHERE (app_id, update_id) IN (
+		          SELECT app_id, update_id FROM error_occurrences WHERE hour >= ?))
 		GROUP BY app_id, update_id, error_fingerprint
 		ORDER BY sum(occurrences) DESC
-		LIMIT ?`, since, limit)
+		LIMIT ?`, since, since, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing the errors without a group: %w", err)
 	}

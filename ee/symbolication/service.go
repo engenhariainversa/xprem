@@ -169,7 +169,14 @@ func (s *Service) scheduleIndex(ctx context.Context, update types.Update, hash s
 		Hash:           hash,
 		Rebuild:        rebuild,
 	})
-	if err != nil && !errors.Is(err, jobs.ErrAlreadyRunning) {
+	if errors.Is(err, jobs.ErrAlreadyRunning) {
+		// A publish is content with the running job; a reindex is not.
+		if rebuild {
+			return err
+		}
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("enqueue sourcemap index of update %s: %w", update.UpdateId, err)
 	}
 	return nil
@@ -260,6 +267,9 @@ func (s *Service) buildIndex(ctx context.Context, appId, hash string, rebuild bo
 	var index bytes.Buffer
 	if err := WriteIndex(&index, m); err != nil {
 		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: %v", types.SourcemapIndexReasonMapInvalid, err))
+	}
+	if index.Len() > maxIndexCacheBytes {
+		return indexOutcome{}, river.JobCancel(fmt.Errorf("%s: the index of map %s exceeds %d MB", types.SourcemapIndexReasonIndexTooLarge, hash, maxIndexCacheBytes>>20))
 	}
 	if err := s.store.PutIndex(ctx, appId, hash, bytes.NewReader(index.Bytes())); err != nil {
 		return indexOutcome{}, fmt.Errorf("storing the index of map %s: %w", hash, err)

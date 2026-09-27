@@ -37,6 +37,8 @@ type exception struct {
 	errorType  string
 	message    string
 	stacktrace string
+	// stacktraceKey is the attribute the stacktrace came from.
+	stacktraceKey string
 }
 
 // exceptionOf reads the exception under whichever keys the record uses; a
@@ -51,9 +53,14 @@ func exceptionOf(eventName, body string, attributes map[string]any) exception {
 		return ""
 	}
 	found := exception{
-		errorType:  text(exceptionTypeKey, manualTypeKey),
-		message:    text(exceptionMessageKey, manualMessageKey),
-		stacktrace: text(exceptionStacktraceKey, manualStacktraceKey),
+		errorType: text(exceptionTypeKey, manualTypeKey),
+		message:   text(exceptionMessageKey, manualMessageKey),
+	}
+	for _, key := range []string{exceptionStacktraceKey, manualStacktraceKey} {
+		if value := text(key); value != "" {
+			found.stacktrace, found.stacktraceKey = value, key
+			break
+		}
 	}
 	if found.message == "" {
 		found.message = body
@@ -65,32 +72,23 @@ func exceptionOf(eventName, body string, attributes map[string]any) exception {
 }
 
 // errorFingerprint names an error by its type and the frames it went through,
-// so every occurrence of one bug in one update gets the same fingerprint. A
-// trace without frames falls back on the message. uuid.Nil means the record
-// is not an error. attributes are the record's as sent, before any cut.
-func errorFingerprint(row LogRow, attributes map[string]any) uuid.UUID {
+// or by its message without frames. uuid.Nil means the record is not an error.
+func errorFingerprint(row LogRow, attributes map[string]any, traces map[string]stacktrace) uuid.UUID {
 	if !isErrorRecord(row) {
 		return uuid.Nil
 	}
 	found := exceptionOf(row.EventName, row.Body, attributes)
-	if frames := frameKeys(found.stacktrace); len(frames) > 0 {
-		return symbolication.Fingerprint(append([]string{found.errorType}, frames...)...)
+	if keys := frameKeys(traces[found.stacktraceKey].frames); len(keys) > 0 {
+		return symbolication.Fingerprint(append([]string{found.errorType}, keys...)...)
 	}
 	return symbolication.Fingerprint(found.errorType, symbolication.NormalizeMessage(found.message))
 }
 
-// frameKeys lists the frames of a stack trace the same way on every device:
-// the file keeps only its name, since the folder holding the bundle differs
-// from one device to the next, and a recursion counts once whatever its depth.
-func frameKeys(stacktrace string) []string {
-	if len(stacktrace) > maxStacktraceScanBytes {
-		stacktrace = stacktrace[:maxStacktraceScanBytes]
-	}
+// frameKeys lists frames the same way on every device: the file by its name
+// only, and a recursion once whatever its depth.
+func frameKeys(frames []symbolication.Frame) []string {
 	var keys []string
-	for _, frame := range symbolication.ReadTrace(stacktrace).Frames {
-		if frame.Skipped > 0 {
-			continue
-		}
+	for _, frame := range frames {
 		file := ""
 		if frame.File != "" {
 			file = path.Base(frame.File)

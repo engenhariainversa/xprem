@@ -485,10 +485,16 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
       new Date(snappedFrom).getTime() < earliest
         ? new Date(Math.ceil(earliest / periodSpec.snapMs) * periodSpec.snapMs).toISOString()
         : snappedFrom;
-    // A window ending now leaves `to` unset, so its head keeps sliding on each refetch.
-    const to = range.to === 'now' ? undefined : bound(range.to, resolved.to);
+    // A live window leaves `to` unset, so its head keeps sliding on each refetch.
+    // A paused one sends its frozen head, so the server measures the same window.
+    const to =
+      range.to !== 'now'
+        ? bound(range.to, resolved.to)
+        : live
+          ? undefined
+          : new Date(windowTick).toISOString();
     return { from, ...(to ? { to } : {}), ...queryForScopes(state, scopes) };
-  }, [maxWindow, periodSpec.snapMs, range, scopes, state, windowTick]);
+  }, [live, maxWindow, periodSpec.snapMs, range, scopes, state, windowTick]);
 
   // What the Postgres device registry can honor of the current selection, for
   // a panel served by it on a page that reads from somewhere else. Carries no
