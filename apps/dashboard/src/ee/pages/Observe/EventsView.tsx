@@ -188,8 +188,8 @@ export const EventsView = ({ filters }: { filters: ObserveFilters }) => {
   // every tick, and depending on it would reset the stream once a minute,
   // which is exactly what pausing is supposed to prevent.
   const streamSignature = useMemo(
-    () => JSON.stringify([filters.state, selectedEvents, search, severity]),
-    [filters.state, selectedEvents, search, severity]
+    () => JSON.stringify([filters.state, filters.range, selectedEvents, search, severity]),
+    [filters.state, filters.range, selectedEvents, search, severity]
   );
   useEffect(() => setExpanded(null), [streamSignature]);
 

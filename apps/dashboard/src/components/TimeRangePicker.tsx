@@ -178,11 +178,12 @@ export const TimeRangePicker = ({
   const [search, setSearch] = useState('');
   const [recent, setRecent] = useState<TimeRange[]>([]);
 
+  const fits = (lengthMs: number) => lengthMs > 0 && lengthMs <= maxRangeMs;
   const openPicker = (next: boolean) => {
     if (next) {
       setDraft(value ?? defaultRange);
       setSearch('');
-      setRecent(readRecentRanges().filter(range => rangeLengthMs(range, Date.now()) <= maxRangeMs));
+      setRecent(readRecentRanges().filter(range => fits(rangeLengthMs(range, Date.now()))));
     }
     setOpen(next);
   };
@@ -193,7 +194,7 @@ export const TimeRangePicker = ({
   };
 
   const draftLength = rangeLengthMs(draft, Date.now());
-  const draftValid = draftLength > 0 && draftLength <= maxRangeMs;
+  const draftValid = fits(draftLength);
   const apply = () => {
     if (!draftValid) return;
     rememberRange(draft);

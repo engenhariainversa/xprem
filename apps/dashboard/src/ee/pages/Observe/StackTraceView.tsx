@@ -120,7 +120,7 @@ const FrameRow = ({ entry, showContext }: { entry: StackEntry; showContext: bool
         </span>
         <span
           className="shrink-0 text-muted-foreground"
-          title={origin ? bundlePosition : frame.file}>
+          title={origin ? `${origin.source} (${bundlePosition})` : frame.file}>
           {position}
         </span>
       </div>
