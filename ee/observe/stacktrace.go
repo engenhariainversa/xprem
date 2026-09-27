@@ -83,22 +83,28 @@ func readStacktrace(value string, minFrames int) (stacktrace, bool) {
 	}
 	// Kept line by line, so the frames are exactly the ones in the text; the
 	// frames come first in the budget and the message lines take what is left.
-	messageRunes := maxStacktraceRunes
+	frameRunes := 0
 	for _, line := range lines {
 		if line.Frame != nil || line.Skipped > 0 {
-			messageRunes -= utf8.RuneCountInString(line.Text) + 1
+			frameRunes += utf8.RuneCountInString(line.Text) + 1
 		}
 	}
+	messageRunes := maxStacktraceRunes - frameRunes
 	var read stacktrace
 	var texts []string
+	kept := 0
 	for _, line := range lines {
 		text := line.Text
-		if line.Frame != nil {
-			read.frames = append(read.frames, *line.Frame)
-		} else if line.Skipped == 0 {
+		if line.Frame != nil || line.Skipped > 0 {
+			if kept += utf8.RuneCountInString(text) + 1; kept > maxStacktraceRunes {
+				continue
+			}
+			if line.Frame != nil {
+				read.frames = append(read.frames, *line.Frame)
+			}
+		} else {
 			text = truncateRunes(text, maxAttributeValueRunes)
-			messageRunes -= utf8.RuneCountInString(text) + 1
-			if messageRunes < 0 {
+			if messageRunes -= utf8.RuneCountInString(text) + 1; messageRunes < 0 {
 				continue
 			}
 		}

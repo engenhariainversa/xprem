@@ -476,9 +476,9 @@ export const useObserveFilters = (scopes: FilterScope[], maxWindow: number) => {
       ).toISOString();
     // Snapping moves the start earlier, and a range wider than the page allows
     // is a 400: the start never goes past the earliest the server accepts,
-    // with one snap of margin for a live head measured at the server's now.
-    const earliest =
-      (range.to === 'now' ? windowTick : resolved.to.getTime()) - maxWindow + periodSpec.snapMs;
+    // with one snap of margin when the head is the server's own now.
+    const margin = range.to === 'now' && live ? periodSpec.snapMs : 0;
+    const earliest = (range.to === 'now' ? windowTick : resolved.to.getTime()) - maxWindow + margin;
     const snappedFrom = bound(range.from, resolved.from);
     const from =
       new Date(snappedFrom).getTime() < earliest

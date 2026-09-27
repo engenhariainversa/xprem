@@ -69,6 +69,16 @@ func TestReadStacktraceCutsTheMessageAndNotTheFrames(t *testing.T) {
 	assert.Len(t, trace.frames, 3, "a message of many lines leaves the frames their room")
 	assert.Contains(t, trace.text, "at f2 ")
 	assert.LessOrEqual(t, len([]rune(trace.text)), maxStacktraceRunes)
+
+	long := "Error: boom"
+	for i := 0; i < 100; i++ {
+		long += fmt.Sprintf("\n    at f%d (address at /%s/cc6bcf26.bundle:1:%d)", i, strings.Repeat("d", 700), 1000+i)
+	}
+	trace, ok = readStacktrace(long, 2)
+	require.True(t, ok)
+	assert.LessOrEqual(t, len([]rune(trace.text)), maxStacktraceRunes, "frames past the budget are dropped, the first ones kept")
+	assert.Contains(t, trace.text, "at f0 ")
+	assert.Len(t, trace.frames, strings.Count(trace.text, "    at "))
 }
 
 func TestReadStacktraceIgnoresText(t *testing.T) {
