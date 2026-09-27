@@ -139,6 +139,8 @@ func registerAppRoutes(
 		NeedsPermission(rbac.PermObserveRead, rbac.FallbackAnyMember))
 	app.route(http.MethodGet, "/observe/breakdown", container.ObserveExplorerHandler.GetBreakdownHandler,
 		NeedsPermission(rbac.PermObserveRead, rbac.FallbackAnyMember))
+	app.route(http.MethodGet, "/observe/errors/{FINGERPRINT}", container.ObserveErrorsHandler.GetErrorGroupHandler,
+		NeedsPermission(rbac.PermObserveRead, rbac.FallbackAnyMember))
 	app.route(http.MethodGet, "/observe/conditions", container.ObserveExplorerHandler.GetConditionsHandler,
 		NeedsPermission(rbac.PermObserveRead, rbac.FallbackAnyMember))
 }

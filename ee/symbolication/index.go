@@ -410,6 +410,8 @@ func (x *Index) SourceText(source int) (string, error) {
 // Position is where a generated position comes from.
 type Position struct {
 	Source string
+	// SourceIndex is Source's place in the map, the argument SourceText takes.
+	SourceIndex int
 	// Line and Column are one-based, as editors count them.
 	Line    int
 	Column  int
@@ -472,10 +474,11 @@ func lastAtOrBefore(segments []Segment, target Segment) (Segment, bool) {
 // position turns a segment's numbers into names.
 func (x *Index) position(s Segment) Position {
 	pos := Position{
-		Source:  x.Sources[s.Source],
-		Line:    int(s.OriginalLine) + 1,
-		Column:  int(s.OriginalColumn) + 1,
-		Ignored: x.Ignored[s.Source],
+		Source:      x.Sources[s.Source],
+		SourceIndex: int(s.Source),
+		Line:        int(s.OriginalLine) + 1,
+		Column:      int(s.OriginalColumn) + 1,
+		Ignored:     x.Ignored[s.Source],
 	}
 	if s.Name != NoIndex && int(s.Name) < len(x.Names) {
 		pos.Name = x.Names[s.Name]

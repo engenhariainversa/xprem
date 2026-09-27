@@ -87,6 +87,13 @@ func (r *fakeIndexes) Finish(_ context.Context, _ types.Update, status types.Sou
 	return nil
 }
 
+func (r *fakeIndexes) GetUpdateSourcemapByUUID(context.Context, string, string) (*UpdateSourcemap, error) {
+	if r.record == nil {
+		return &UpdateSourcemap{}, nil
+	}
+	return &UpdateSourcemap{Hash: &r.record.Hash, Index: r.record}, nil
+}
+
 func (r *fakeIndexes) GetUpdateSourcemap(context.Context, string, string, string, string) (*UpdateSourcemap, error) {
 	if r.record == nil {
 		return &UpdateSourcemap{}, nil
@@ -98,7 +105,7 @@ const testHash = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 
 func newTestService(store *fakeStore) (*Service, *fakeIndexes) {
 	indexes := &fakeIndexes{}
-	service := &Service{store: store, indexes: indexes, licenseValid: func() bool { return true }}
+	service := &Service{store: store, indexes: indexes, cache: newIndexCache(), licenseValid: func() bool { return true }}
 	return service, indexes
 }
 

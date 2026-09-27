@@ -630,7 +630,59 @@ export type ObserveLog = {
   easBuildId: string;
   environment: string;
   sdkVersion: string;
+  // Absent for a record that is not an error.
+  errorFingerprint?: string;
 };
+
+// Where a frame of a stack trace comes from, once mapped through the source map.
+export type TraceOrigin = {
+  source: string;
+  line: number;
+  column: number;
+  name?: string;
+  // false for a dependency: a source the map lists as ignored.
+  inApp: boolean;
+  // The lines of code around an in-app frame; firstLine numbers the first one.
+  context?: { firstLine: number; lines: string[] };
+};
+
+// One entry of a symbolicated trace: a frame, or the count of frames the
+// trace left out (skipped). repeat folds a recursion into one entry.
+export type TraceFrame = {
+  function?: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  native?: boolean;
+  repeat?: number;
+  skipped?: number;
+  origin?: TraceOrigin;
+};
+
+export type ErrorGroup = {
+  fingerprint: string;
+  // The same for this error in every update.
+  groupFingerprint: string;
+  errorType: string;
+  message: string;
+  // "LabScreen.tsx in onPress": the first frame of the app's own code.
+  culprit: string;
+  trace: { message: string; frames: TraceFrame[] | null };
+  symbolicatedAt: string;
+};
+
+// Why an error has no group yet, or 'ready'. 'waiting' means the source map
+// is indexed and the sweep has not passed yet; both it and 'indexing' resolve
+// on their own.
+export type ErrorGroupStatus =
+  | 'ready'
+  | 'waiting'
+  | 'indexing'
+  | 'index_failed'
+  | 'no_sourcemap'
+  | 'unavailable';
+
+export type ErrorGroupAnswer = { status: ErrorGroupStatus; group?: ErrorGroup };
 
 export type ObserveLogsPage = {
   available: boolean;
@@ -684,7 +736,12 @@ export type UpdateSourcemapRecord = {
 };
 
 export type BundlePatchStatus =
-  'pending' | 'running' | 'stored' | 'skipped' | 'failed' | 'cancelled';
+  | 'pending'
+  | 'running'
+  | 'stored'
+  | 'skipped'
+  | 'failed'
+  | 'cancelled';
 
 // One bsdiff patch planned toward a target update from an earlier source
 // update (control-plane only, when bundle diffing is enabled). Sizes are set
@@ -1709,6 +1766,13 @@ export class ApiClient {
     return this.request<ObserveEvents>(`${this.appScope()}/observe/events?${search.toString()}`, {
       method: 'GET',
     });
+  }
+  public async getErrorGroup(updateId: string, fingerprint: string) {
+    const search = new URLSearchParams({ updateId });
+    return this.request<ErrorGroupAnswer>(
+      `${this.appScope()}/observe/errors/${encodeURIComponent(fingerprint)}?${search.toString()}`,
+      { method: 'GET' }
+    );
   }
   public async getObserveLogs(query: ObserveLogsQuery = {}) {
     const search = observeSearchParams(query);

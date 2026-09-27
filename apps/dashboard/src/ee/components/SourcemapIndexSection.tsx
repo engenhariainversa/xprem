@@ -9,6 +9,7 @@ import { api, SourcemapIndexStatus, UpdateSourcemapRecord, describeApiError } fr
 import { useSelectedApp } from '@/lib/SelectedAppContext';
 import { useAppPermission } from '@/ee/lib/PermissionsContext';
 import { EnterpriseFeatureGate } from '@/ee/components/EnterpriseFeatureGate';
+import { sourcemapFeature } from '@/ee/lib/sourcemapFeature';
 import { useToast } from '@/hooks/use-toast';
 import { formatTimestamp } from '@/lib/utils';
 import { ApiError } from '@/components/APIError';
@@ -103,12 +104,6 @@ const IndexOutcome = ({ record }: { record: UpdateSourcemapRecord }) => {
       </p>
     </div>
   );
-};
-
-const sourcemapFeature = {
-  name: 'Source map symbolication',
-  description:
-    'xprem indexes the source map of each update to enrich Observe error logs: every stack frame pointing into the bundle is traced back to your original file, line and function.',
 };
 
 export const SourcemapIndexSection = ({

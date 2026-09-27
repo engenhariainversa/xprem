@@ -4,8 +4,10 @@
 
 import { ObserveLog } from '@/lib/api';
 import { deviceName } from './deviceNames';
-import { JsonView } from './JsonView';
+import { JsonView, type Json } from './JsonView';
 import { parseJsonDocument } from './logRecords';
+import { parseStackTrace, type StackTrace } from './stackTrace';
+import { StackTraceView } from './StackTraceView';
 
 const Detail = ({ label, value }: { label: string; value: string }) => (
   <div className="min-w-0">
@@ -14,12 +16,43 @@ const Detail = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
+// The attributes known to hold a trace: their title, and whether it is the
+// exception's own trace, the one its group symbolicates. "stack" is what the
+// manual xprem_js_crash event carried. Any other attribute keeps its key.
+const traceAttributes: Record<string, { title: string; exception: boolean }> = {
+  'exception.stacktrace': { title: 'Stack trace', exception: true },
+  stack: { title: 'Stack trace', exception: true },
+  'expo.error.component_stack': { title: 'Component stack', exception: false },
+};
+
+// Splits the attributes into the stack traces they hold and everything else,
+// so a trace shows as frames rather than as one unreadable string.
+const splitStackTraces = (attributes: Json | null) => {
+  const traces: Array<{ key: string; trace: StackTrace; raw: string }> = [];
+  if (attributes === null || typeof attributes !== 'object' || Array.isArray(attributes)) {
+    return { traces, rest: attributes };
+  }
+  const rest: Record<string, Json> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    const trace =
+      typeof value === 'string' ? parseStackTrace(value, key in traceAttributes ? 1 : 2) : null;
+    if (trace && typeof value === 'string') traces.push({ key, trace, raw: value });
+    else rest[key] = value;
+  }
+  return { traces, rest };
+};
+
 export const LogDetails = ({ log }: { log: ObserveLog }) => {
   const body = log.body.trim();
-  const bodyDocument = body ? parseJsonDocument(body) : null;
-  const attributes = log.attributes.trim() ? parseJsonDocument(log.attributes) : null;
+  const bodyTrace = body ? parseStackTrace(body) : null;
+  const bodyDocument = body && !bodyTrace ? parseJsonDocument(body) : null;
+  const { traces, rest: attributes } = splitStackTraces(
+    log.attributes.trim() ? parseJsonDocument(log.attributes) : null
+  );
   const hasAttributes =
-    attributes !== null && (Array.isArray(attributes) || Object.keys(attributes).length > 0);
+    attributes !== null &&
+    typeof attributes === 'object' &&
+    (Array.isArray(attributes) || Object.keys(attributes).length > 0);
   return (
     <div className="border-t bg-muted/30 px-6 py-4">
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -40,10 +73,27 @@ export const LogDetails = ({ log }: { log: ObserveLog }) => {
         <Detail label="Country" value={log.countryCode} />
         <Detail label="OS" value={`${log.osName} ${log.osVersion}`.trim()} />
       </dl>
+      {traces.map(({ key, trace, raw }) => (
+        <div key={key} className="mt-4">
+          <StackTraceView
+            title={traceAttributes[key]?.title ?? key}
+            trace={trace}
+            raw={raw}
+            // The group symbolicates the exception's own trace, not a component stack.
+            errorGroup={
+              traceAttributes[key]?.exception && log.errorFingerprint
+                ? { updateId: log.updateId, fingerprint: log.errorFingerprint }
+                : undefined
+            }
+          />
+        </div>
+      ))}
       {body && (
         <div className="mt-4">
           <div className="mb-1.5 text-[10px] text-muted-foreground">Message</div>
-          {bodyDocument !== null ? (
+          {bodyTrace ? (
+            <StackTraceView title="Stack trace" trace={bodyTrace} raw={body} />
+          ) : bodyDocument !== null ? (
             <JsonView value={bodyDocument} />
           ) : (
             <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg border bg-card p-3 font-mono text-[11px] leading-relaxed text-foreground">

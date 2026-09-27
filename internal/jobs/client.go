@@ -33,6 +33,7 @@ const QueueSourcemapIndex = "sourcemap-index"
 type Client struct {
 	pool        *pgxpool.Pool
 	workers     *river.Workers
+	periodic    []*river.PeriodicJob
 	riverClient *river.Client[pgx.Tx]
 }
 
@@ -47,6 +48,12 @@ func NewClient(engine *database.Engine) (*Client, error) {
 // Workers is the registry to add workers to, before Start.
 func (c *Client) Workers() *river.Workers {
 	return c.workers
+}
+
+// AddPeriodic schedules a job, before Start. River inserts it from one
+// replica only, the elected leader.
+func (c *Client) AddPeriodic(job *river.PeriodicJob) {
+	c.periodic = append(c.periodic, job)
 }
 
 func (c *Client) Start(ctx context.Context) error {
@@ -70,7 +77,8 @@ func (c *Client) Start(ctx context.Context) error {
 			QueueBSDiff:         {MaxWorkers: 2},
 			QueueSourcemapIndex: {MaxWorkers: 1},
 		},
-		Workers: c.workers,
+		Workers:      c.workers,
+		PeriodicJobs: c.periodic,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to build the river client: %w", err)

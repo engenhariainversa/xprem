@@ -23,6 +23,9 @@ type IndexRepository interface {
 	Finish(ctx context.Context, update types.Update, status types.SourcemapIndexStatus, reason string, segments *int, indexSize *int64) error
 	// GetUpdateSourcemap answers nil when the update does not exist.
 	GetUpdateSourcemap(ctx context.Context, appId, branch, runtimeVersion, updateId string) (*UpdateSourcemap, error)
+	// GetUpdateSourcemapByUUID is GetUpdateSourcemap for the UUID a device
+	// reports; only the index status is filled.
+	GetUpdateSourcemapByUUID(ctx context.Context, appId, updateUUID string) (*UpdateSourcemap, error)
 }
 
 // UpdateSourcemap is what the dashboard shows about an update's source map:
@@ -162,5 +165,23 @@ func (r *PostgresIndexRepository) GetUpdateSourcemap(ctx context.Context, appId,
 		index.Segments = &count
 	}
 	sourcemap.Index = index
+	return sourcemap, nil
+}
+
+func (r *PostgresIndexRepository) GetUpdateSourcemapByUUID(ctx context.Context, appId, updateUUID string) (*UpdateSourcemap, error) {
+	row, err := r.engine.Queries.GetUpdateSourcemapByUUID(ctx, pgdb.GetUpdateSourcemapByUUIDParams{
+		AppID:      repository.ToPgUUID(appId),
+		UpdateUuid: repository.ToPgUUID(updateUUID),
+	})
+	if err != nil {
+		if database.IsNoRows(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read the update sourcemap from database: %w", err)
+	}
+	sourcemap := &UpdateSourcemap{Hash: row.SourcemapHash}
+	if row.IndexStatus != "" && row.SourcemapHash != nil {
+		sourcemap.Index = &types.SourcemapIndex{Hash: *row.SourcemapHash, Status: types.SourcemapIndexStatus(row.IndexStatus)}
+	}
 	return sourcemap, nil
 }

@@ -2636,6 +2636,33 @@ func (q *Queries) GetUpdateSourcemap(ctx context.Context, arg GetUpdateSourcemap
 	return i, err
 }
 
+const getUpdateSourcemapByUUID = `-- name: GetUpdateSourcemapByUUID :one
+SELECT u.sourcemap_hash, COALESCE(si.status, '')::text AS index_status
+FROM updates u
+JOIN branches b ON b.id = u.branch_id
+LEFT JOIN sourcemap_indexes si ON si.branch_id = u.branch_id AND si.update_id = u.id
+WHERE b.app_id = $1
+  AND u.update_uuid = $2
+`
+
+type GetUpdateSourcemapByUUIDParams struct {
+	AppID      pgtype.UUID `json:"app_id"`
+	UpdateUuid pgtype.UUID `json:"update_uuid"`
+}
+
+type GetUpdateSourcemapByUUIDRow struct {
+	SourcemapHash *string `json:"sourcemap_hash"`
+	IndexStatus   string  `json:"index_status"`
+}
+
+// The map hash and index status of the update a device reports by UUID.
+func (q *Queries) GetUpdateSourcemapByUUID(ctx context.Context, arg GetUpdateSourcemapByUUIDParams) (GetUpdateSourcemapByUUIDRow, error) {
+	row := q.db.QueryRow(ctx, getUpdateSourcemapByUUID, arg.AppID, arg.UpdateUuid)
+	var i GetUpdateSourcemapByUUIDRow
+	err := row.Scan(&i.SourcemapHash, &i.IndexStatus)
+	return i, err
+}
+
 const getUpdateSourcemapHash = `-- name: GetUpdateSourcemapHash :one
 SELECT u.sourcemap_hash
 FROM updates u

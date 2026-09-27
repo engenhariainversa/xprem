@@ -9,6 +9,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	"xprem/ee/symbolication"
 	"xprem/internal/database/clickhouse"
 
 	"github.com/google/uuid"
@@ -119,4 +120,172 @@ func TestHealthHistoryRoundTripUsesLatestSnapshotInMinute(t *testing.T) {
 	assert.EqualValues(t, 20, points[updateID][0].DevicesOnUpdate)
 	require.NotNil(t, points[updateID][0].HealthPercent)
 	assert.InDelta(t, 90, *points[updateID][0].HealthPercent, 0.001)
+}
+
+// Needs TEST_CLICKHOUSE_URL and TEST_DATABASE_URL to run.
+func TestUpdateErrorsCountEachErrorOfAnUpdate(t *testing.T) {
+	chURL, pgURL := requireLiveStores(t)
+	clickhouse.RunDBMigrations(chURL, pgURL)
+
+	ctx := context.Background()
+	engine, err := clickhouse.NewClickHouseEngine(ctx, chURL)
+	require.NoError(t, err)
+	defer engine.Close()
+
+	appID, updateID, otherUpdateID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	firstDevice, secondDevice := uuid.NewString(), uuid.NewString()
+	nullPointer := errorAttributes("TypeError", "Cannot read property 'name' of undefined", "")
+	timeout := errorAttributes("Error", "Request timed out", "")
+	manualCrash := map[string]any{"name": "RangeError", "message": "Maximum call stack size exceeded", "stack": ""}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	logRow := func(update, device string, attributes map[string]any, severity uint8, fatal bool, at time.Time) LogRow {
+		row := LogRow{
+			Envelope: Envelope{
+				AppID: appID, EASClientID: device, UpdateID: update, SessionID: uuid.NewString(),
+				Attributes: marshalAttributes(attributes, nil), Timestamp: at, ContentKey: uuid.New(),
+			},
+			EventName:      "js.exception",
+			SeverityNumber: severity,
+			IsFatal:        fatal,
+		}
+		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		return row
+	}
+	fingerprintOf := func(attributes map[string]any) string {
+		return errorFingerprint(LogRow{SeverityNumber: severityError}, attributes).String()
+	}
+	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, []LogRow{
+		logRow(updateID, firstDevice, nullPointer, 21, true, now.Add(-2*time.Hour)),
+		logRow(updateID, firstDevice, nullPointer, 21, true, now.Add(-time.Hour)),
+		logRow(updateID, secondDevice, nullPointer, 17, false, now),
+		logRow(updateID, secondDevice, timeout, 17, false, now),
+		logRow(otherUpdateID, firstDevice, nullPointer, 21, true, now),
+		logRow(updateID, firstDevice, manualCrash, 21, true, now),
+		// An info log carries no fingerprint, whatever its attributes say.
+		logRow(updateID, firstDevice, map[string]any{"message": "lab"}, 9, false, now),
+	}))
+
+	result, err := (&Explorer{clickhouse: engine}).ReadUpdateErrors(ctx, appID, updateID)
+	require.NoError(t, err)
+	require.True(t, result.Available)
+	require.Len(t, result.Errors, 3, "one entry per distinct error, the plain log counts for nothing")
+
+	mostFrequent := result.Errors[0]
+	assert.Equal(t, fingerprintOf(nullPointer), mostFrequent.Fingerprint)
+	assert.Equal(t, "TypeError: Cannot read property 'name' of undefined", mostFrequent.Title)
+	assert.EqualValues(t, 3, mostFrequent.Occurrences, "the other update's occurrence is not counted")
+	assert.EqualValues(t, 2, mostFrequent.Crashes)
+	assert.EqualValues(t, 2, mostFrequent.Devices)
+	assert.True(t, mostFrequent.FirstSeen.Equal(now.Add(-2*time.Hour)))
+	assert.True(t, mostFrequent.LastSeen.Equal(now))
+
+	titles := []string{result.Errors[1].Title, result.Errors[2].Title}
+	assert.ElementsMatch(t, []string{"Error: Request timed out", "RangeError: Maximum call stack size exceeded"}, titles,
+		"the manual event's name and message title it like the SDK's keys")
+
+	// The default logs query unions native crashes in: both arms carry the fingerprint.
+	page, err := (&Explorer{clickhouse: engine}).ReadLogs(ctx, appID, LogsQuery{
+		ExplorerQuery: ExplorerQuery{From: now.Add(-3 * time.Hour), To: now.Add(time.Minute), UpdateIDs: []string{updateID}},
+		Limit:         10,
+	})
+	require.NoError(t, err)
+	fingerprints := map[string]int{}
+	for _, row := range page.Logs {
+		fingerprints[row.ErrorFingerprint]++
+	}
+	assert.Equal(t, 3, fingerprints[fingerprintOf(nullPointer)])
+	assert.Equal(t, 1, fingerprints[fingerprintOf(manualCrash)])
+	assert.Equal(t, 1, fingerprints[""], "the plain log has no fingerprint")
+}
+
+// A map of one bundle line where offset 120 is onPress in LabScreen.tsx.
+func labIndex(t *testing.T) *symbolication.Index {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, symbolication.WriteIndex(&buf, &symbolication.Map{
+		Sources:        []string{"src/LabScreen.tsx"},
+		SourcesContent: []string{"const onPress = () => {\n  console.log(user.profile.name)\n}\n"},
+		Names:          []string{"onPress"},
+		Ignored:        []bool{false},
+		Segments:       []symbolication.Segment{{Column: 100, Source: 0, OriginalLine: 1, OriginalColumn: 2, Name: 0}},
+		Lines:          1,
+	}))
+	index, err := symbolication.OpenIndex(bytes.NewReader(buf.Bytes()))
+	require.NoError(t, err)
+	return index
+}
+
+type indexOpenerFunc func(ctx context.Context, appID, updateUUID string) (*symbolication.Index, error)
+
+func (f indexOpenerFunc) OpenUpdateIndex(ctx context.Context, appID, updateUUID string) (*symbolication.Index, error) {
+	return f(ctx, appID, updateUUID)
+}
+
+// Needs TEST_CLICKHOUSE_URL and TEST_DATABASE_URL to run.
+func TestErrorGroupsSweepGroupsEachErrorOnce(t *testing.T) {
+	chURL, pgURL := requireLiveStores(t)
+	clickhouse.RunDBMigrations(chURL, pgURL)
+
+	ctx := context.Background()
+	engine, err := clickhouse.NewClickHouseEngine(ctx, chURL)
+	require.NoError(t, err)
+	defer engine.Close()
+	explorer := &Explorer{clickhouse: engine}
+
+	appID, indexedUpdate, unmappedUpdate := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	bundle := "/data/.expo-internal/cc6bcf26.bundle"
+	crash := errorAttributes("TypeError", "Cannot read property 'name' of undefined",
+		"TypeError: Cannot read property 'name' of undefined\n    at onPress (address at "+bundle+":1:120)\n    at forEach (native)")
+	now := time.Now().UTC()
+	logRow := func(update string, attributes map[string]any) LogRow {
+		row := LogRow{
+			Envelope: Envelope{
+				AppID: appID, EASClientID: uuid.NewString(), UpdateID: update, SessionID: uuid.NewString(),
+				Attributes: marshalAttributes(attributes, nil), Timestamp: now, ContentKey: uuid.New(),
+			},
+			EventName: "js.exception", SeverityNumber: 21, IsFatal: true,
+		}
+		row.ErrorFingerprint = errorFingerprint(row, attributes)
+		return row
+	}
+	require.NoError(t, NewClickHouseTelemetrySink(engine).InsertLogs(ctx, []LogRow{
+		logRow(indexedUpdate, crash), logRow(indexedUpdate, crash), logRow(unmappedUpdate, crash),
+	}))
+
+	// The sweep covers every app in the shared test database; only this one's opens count.
+	opened := 0
+	sweep := NewErrorGroupsSweep(explorer, indexOpenerFunc(func(_ context.Context, app, updateUUID string) (*symbolication.Index, error) {
+		if app != appID {
+			return nil, symbolication.ErrNoSourcemap
+		}
+		opened++
+		if updateUUID == unmappedUpdate {
+			return nil, symbolication.ErrNoSourcemap
+		}
+		return labIndex(t), nil
+	}))
+	require.NoError(t, sweep.Run(ctx))
+	assert.Equal(t, 2, opened, "one open per update")
+
+	fingerprint := errorFingerprint(LogRow{SeverityNumber: 21, IsFatal: true}, crash).String()
+	group, err := explorer.ReadErrorGroup(ctx, appID, indexedUpdate, fingerprint)
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	assert.Equal(t, "TypeError", group.ErrorType)
+	assert.Equal(t, "LabScreen.tsx in onPress", group.Culprit)
+	require.Len(t, group.Trace.Frames, 2)
+	require.NotNil(t, group.Trace.Frames[0].Origin)
+	assert.Equal(t, 2, group.Trace.Frames[0].Origin.Line)
+	assert.Equal(t, []string{"const onPress = () => {", "  console.log(user.profile.name)", "}"}, group.Trace.Frames[0].Origin.Context.Lines)
+
+	unmapped, err := explorer.ReadErrorGroup(ctx, appID, unmappedUpdate, fingerprint)
+	require.NoError(t, err)
+	assert.Nil(t, unmapped, "an update without a map keeps its error ungrouped")
+
+	pending, err := explorer.pendingErrorGroups(ctx, now.Add(-time.Hour), 10)
+	require.NoError(t, err)
+	for _, key := range pending {
+		assert.NotEqual(t, indexedUpdate, key.updateID, "a grouped error is not listed again")
+	}
 }

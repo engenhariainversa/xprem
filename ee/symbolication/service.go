@@ -31,6 +31,8 @@ type IndexStore interface {
 var (
 	ErrUnavailable    = errors.New("source map indexing needs source map uploads, the control plane and an enterprise license")
 	ErrNoSourcemap    = errors.New("this update has no source map")
+	ErrIndexNotReady  = errors.New("the source map of this update is not indexed yet")
+	ErrIndexFailed    = errors.New("the source map of this update could not be indexed")
 	ErrUpdateNotFound = errors.New("update not found")
 )
 
@@ -41,12 +43,13 @@ type Service struct {
 	store   IndexStore
 	indexes IndexRepository
 	jobs    *jobs.Client
+	cache   *indexCache
 	// licenseValid is a field, not a direct call, so tests can pin it without a signed key.
 	licenseValid func() bool
 }
 
 func NewService(store IndexStore, indexes IndexRepository, jobsClient *jobs.Client) *Service {
-	return &Service{store: store, indexes: indexes, jobs: jobsClient, licenseValid: licensing.IsEnterprise}
+	return &Service{store: store, indexes: indexes, jobs: jobsClient, cache: newIndexCache(), licenseValid: licensing.IsEnterprise}
 }
 
 // available is nil-safe: the handler is wired even when indexing is not.
@@ -274,4 +277,67 @@ func (s *Service) existingIndex(ctx context.Context, appId, hash string) (indexO
 		return indexOutcome{}, err
 	}
 	return indexOutcome{segments: segments}, nil
+}
+
+// OpenUpdateIndex opens the index of the update a device reports by UUID.
+// An update whose index is not there yet is ErrIndexNotReady, one that never
+// will have one is ErrNoSourcemap or ErrIndexFailed.
+func (s *Service) OpenUpdateIndex(ctx context.Context, appId, updateUUID string) (*Index, error) {
+	if !s.available() {
+		return nil, ErrUnavailable
+	}
+	hash, err := s.storedIndexHash(ctx, appId, updateUUID)
+	if err != nil {
+		return nil, err
+	}
+	if index, ok := s.cache.get(hash); ok {
+		return index, nil
+	}
+	file, err := s.store.GetIndex(ctx, appId, hash)
+	if err != nil {
+		return nil, fmt.Errorf("reading the index of map %s: %w", hash, err)
+	}
+	if file == nil {
+		return nil, ErrIndexNotReady
+	}
+	defer file.Reader.Close()
+	data, err := io.ReadAll(io.LimitReader(file.Reader, maxIndexCacheBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading the index of map %s: %w", hash, err)
+	}
+	return s.cache.put(hash, data)
+}
+
+// UpdateIndexState is OpenUpdateIndex's answer without opening anything: nil
+// when the index is ready to use.
+func (s *Service) UpdateIndexState(ctx context.Context, appId, updateUUID string) error {
+	if !s.available() {
+		return ErrUnavailable
+	}
+	_, err := s.storedIndexHash(ctx, appId, updateUUID)
+	return err
+}
+
+// storedIndexHash is the hash of the update's map once its index is stored.
+func (s *Service) storedIndexHash(ctx context.Context, appId, updateUUID string) (string, error) {
+	sourcemap, err := s.indexes.GetUpdateSourcemapByUUID(ctx, appId, updateUUID)
+	if err != nil {
+		return "", err
+	}
+	if sourcemap == nil {
+		return "", ErrUpdateNotFound
+	}
+	if sourcemap.Hash == nil {
+		return "", ErrNoSourcemap
+	}
+	if sourcemap.Index == nil {
+		return "", ErrIndexNotReady
+	}
+	switch sourcemap.Index.Status {
+	case types.SourcemapIndexStored:
+		return *sourcemap.Hash, nil
+	case types.SourcemapIndexFailed, types.SourcemapIndexCancelled:
+		return "", ErrIndexFailed
+	}
+	return "", ErrIndexNotReady
 }

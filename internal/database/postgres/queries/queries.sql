@@ -405,6 +405,15 @@ FROM updates u
 JOIN branches b ON u.branch_id = b.id
 WHERE u.id = $1 AND b.app_id = $2 AND b.name = $3;
 
+-- name: GetUpdateSourcemapByUUID :one
+-- The map hash and index status of the update a device reports by UUID.
+SELECT u.sourcemap_hash, COALESCE(si.status, '')::text AS index_status
+FROM updates u
+JOIN branches b ON b.id = u.branch_id
+LEFT JOIN sourcemap_indexes si ON si.branch_id = u.branch_id AND si.update_id = u.id
+WHERE b.app_id = sqlc.arg('app_id')
+  AND u.update_uuid = sqlc.arg('update_uuid');
+
 -- name: ListUpdatesWithoutAssetMapping :many
 SELECT u.id, b.app_id, b.name AS branch, rv.version AS runtime_version
 FROM updates u

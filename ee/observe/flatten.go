@@ -5,13 +5,12 @@
 package observe
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"sort"
 	"strconv"
 	"time"
 	"xprem/ee/identity"
+	"xprem/ee/symbolication"
 
 	"github.com/google/uuid"
 )
@@ -70,6 +69,8 @@ type LogRow struct {
 	SeverityText   string
 	IsFatal        bool
 	Body           string
+	// ErrorFingerprint is uuid.Nil for a record that is not an error. See errorFingerprint.
+	ErrorFingerprint uuid.UUID
 }
 
 // Wire attribute keys (resource level unless noted).
@@ -296,6 +297,7 @@ func FlattenLogs(appID string, batch LogBatch, now time.Time) []LogRow {
 				IsFatal:        isFatal,
 				Body:           boundBody(record.Body),
 			}
+			row.ErrorFingerprint = errorFingerprint(row, record.Attributes)
 			hashParts := []string{
 				row.EASClientID, row.SessionID, row.UpdateID, row.EventName,
 				strconv.FormatUint(record.TimeUnixNano, 10),
@@ -391,14 +393,5 @@ func marshalAttributes(attrs map[string]any, envelope map[string]bool) string {
 // instead of counting twice. Parts are length-prefixed rather than NUL-separated so two fields adjacent on the
 // wire (routeName, customParams) can't be shifted into producing the same hash.
 func contentKey(parts ...string) uuid.UUID {
-	h := sha256.New()
-	var length [8]byte
-	for _, part := range parts {
-		binary.LittleEndian.PutUint64(length[:], uint64(len(part)))
-		_, _ = h.Write(length[:])
-		_, _ = h.Write([]byte(part))
-	}
-	var key uuid.UUID
-	copy(key[:], h.Sum(nil)[:16])
-	return key
+	return symbolication.Fingerprint(parts...)
 }

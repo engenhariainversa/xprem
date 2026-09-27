@@ -73,6 +73,7 @@ type AppContainer struct {
 	ObserveIngestHandler        *observe.IngestHandler
 	ObserveHealthHistoryHandler *observe.HealthHistoryHandler
 	ObserveExplorerHandler      *observe.ExplorerHandler
+	ObserveErrorsHandler        *observe.ErrorsHandler
 	IdentityHandler             *identity.IdentityHandler
 }
 
@@ -119,6 +120,8 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 	var healthHistory *observe.HealthHistory
 	var stateHistory *observe.StateHistory
 	var explorer *observe.Explorer
+	// nil without CLICKHOUSE_URL: telemetry is then acknowledged and dropped.
+	var observeClickHouse *clickhouse.Engine
 	var checkInRecorder *observe.CheckInRecorder
 
 	telemetryEnabled := !config.IsServerTelemetryDisabled() && !config.IsTestMode()
@@ -195,8 +198,6 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 			stateHistory = observe.NewStateHistory(dbEngine)
 			identityService = identity.NewService(identity.NewPostgresIdentityRepository(dbEngine))
 			checkInRecorder = observe.NewCheckInRecorder(identityService, cache.GetCache())
-			var observeClickHouse *clickhouse.Engine
-
 			if chUrl := config.GetClickHouseURL(); chUrl != "" {
 				chEngine, err := clickhouse.NewClickHouseEngine(ctx, chUrl)
 				if err != nil {
@@ -313,6 +314,11 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 		if symbolicationService != nil {
 			symbolication.RegisterWorker(jobsClient.Workers(), symbolicationService)
 		}
+		if symbolicationService != nil && observeClickHouse != nil {
+			errorGroupsSweep := observe.NewErrorGroupsSweep(explorer, symbolicationService)
+			observe.RegisterErrorGroupsWorker(jobsClient.Workers(), errorGroupsSweep)
+			jobsClient.AddPeriodic(errorGroupsSweep.PeriodicJob())
+		}
 		if err := jobsClient.Start(ctx); err != nil {
 			log.Fatalf("Job system startup failed: %v", err)
 		}
@@ -412,6 +418,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 		ObserveIngestHandler:        observe.NewIngestHandler(identityService, telemetrySink, branchResolver, checkInRecorder),
 		ObserveHealthHistoryHandler: observe.NewHealthHistoryHandler(healthHistory, stateHistory),
 		ObserveExplorerHandler:      observe.NewExplorerHandler(explorer, identityService),
+		ObserveErrorsHandler:        observe.NewErrorsHandler(explorer, symbolicationService),
 		IdentityHandler:             identity.NewIdentityHandler(identityService),
 		MCPHandler:                  mcpHandler,
 		OAuthHandler:                oauthHandler,
