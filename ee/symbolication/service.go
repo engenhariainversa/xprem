@@ -190,8 +190,7 @@ func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) er
 
 	outcome, err := s.buildIndex(ctx, args.AppId, args.Hash, args.Rebuild)
 	if err == nil {
-		// The stored record is what makes the index usable, so its failure fails
-		// the job and River retries; the retry finds the index already stored.
+		// Not through record: an index without its stored record is not usable yet.
 		segments := outcome.segments
 		if err := s.indexes.Finish(ctx, update, types.SourcemapIndexStored, "", &segments, outcome.indexSize); err != nil {
 			return fmt.Errorf("recording the index of update %s: %w", update.UpdateId, err)
@@ -216,8 +215,7 @@ func (s *Service) runIndexJob(ctx context.Context, job *river.Job[indexArgs]) er
 	return err
 }
 
-// record runs a bookkeeping write and logs its failure, so the build's own
-// outcome is what the job reports.
+// record runs a bookkeeping write and logs its failure instead of failing the job.
 func (s *Service) record(update types.Update, write func() error) {
 	if err := write(); err != nil {
 		log.Printf("[sourcemap] cannot record the index of update %s: %v", update.UpdateId, err)

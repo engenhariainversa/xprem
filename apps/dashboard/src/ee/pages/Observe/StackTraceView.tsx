@@ -99,7 +99,7 @@ const FrameRow = ({ entry, showContext }: { entry: StackEntry; showContext: bool
         onKeyDown={
           toggleContext &&
           (event => {
-            if (event.key !== 'Enter' && event.key !== ' ') return;
+            if ((event.key !== 'Enter' && event.key !== ' ') || event.repeat) return;
             // Space scrolls the page unless told otherwise.
             event.preventDefault();
             toggleContext();
