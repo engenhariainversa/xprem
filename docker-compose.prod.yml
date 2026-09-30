@@ -1,0 +1,62 @@
+# Produção em ota.engenhariainversa.com.br
+# cloudflared -> proxy-nginx:80 -> xprem-app:3000 (rede externa "proxy", sem portas no host)
+# Uso: docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+name: xprem
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xprem-app
+    restart: unless-stopped
+    env_file: .env.prod
+    volumes:
+      - updates:/app/updates
+    depends_on:
+      db:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks: [default, proxy]
+
+  db:
+    image: postgres:17-alpine
+    container_name: xprem-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xprem
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: xprem
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xprem -d xprem"]
+      interval: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    container_name: xprem-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: xprem
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+      CLICKHOUSE_DB: xprem
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      retries: 30
+
+volumes:
+  updates:
+  postgres_data:
+  clickhouse_data:
+
+networks:
+  proxy:
+    external: true
