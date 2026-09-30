@@ -316,6 +316,7 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 		oauthHandler = oauth.NewOAuthHandler(oauthService, rateLimiter)
 
 		rbac.MustValidateMCPTools(mcptools.DeclaredPermissions(), eemcptools.DeclaredPermissions())
+		invalidateApiKeys := func(appID string) { cache.GetCache().Delete(dashboard.ComputeGetApiKeysCacheKey(appID)) }
 		mcpHandler = mcp.NewMCPHandler(mcp.NewMCPService(
 			mcptools.Configurator(mcptools.Deps{
 				Apps:                appRepo,
@@ -330,6 +331,8 @@ func InitDependencies(ctx context.Context) (*AppContainer, func()) {
 				Deployments:         deploymentService,
 				AppCreator:          appService,
 				OnAppsChanged:       func() { cache.GetCache().Delete(dashboard.ComputeGetAppsCacheKey()) },
+				ApiKeys:             cliAuthService,
+				OnApiKeysChanged:    invalidateApiKeys,
 				SSOEnabled:          ssoService.Enabled,
 				VisibleApps:         rbacService.VisibleAppsForPrincipal,
 				CanUseSomewhere:     rbacService.MCPCanUseSomewhere,
